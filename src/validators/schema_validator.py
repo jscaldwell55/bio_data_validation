@@ -12,6 +12,39 @@ from src.schemas.biological_schemas import SequenceRecord, GuideRNARecord
 
 logger = logging.getLogger(__name__)
 
+
+class SchemaValidator:
+    """Schema validation using Pydantic and BioPython"""
+    
+    def __init__(self):
+        pass
+    
+    def validate(
+        self,
+        dataset: Any,
+        schema_type: Union[str, Any] = None,
+        strict: bool = True
+    ) -> ValidationResult:
+        """
+        Validate dataset against predefined schemas.
+        
+        Args:
+            dataset: Data to validate (dict, list, DataFrame, or string)
+            schema_type: Type of schema ('fasta', 'guide_rna', 'json', etc.) 
+                        OR DatasetMetadata object (for backward compatibility)
+            strict: Whether to fail on first error or collect all errors
+            
+        Returns:
+            ValidationResult with all validation issues
+        """
+        # Handle DatasetMetadata object for backward compatibility
+        from src.schemas.base_schemas import DatasetMetadata
+        if isinstance(schema_type, DatasetMetadata):
+            schema_type = schema_type.format_type
+        
+        return validate_schema(dataset, schema_type, strict)
+
+
 def validate_schema(
     dataset: Any,
     schema_type: str,
@@ -141,13 +174,35 @@ def _validate_fasta(data: str, strict: bool) -> tuple[List[ValidationIssue], int
     return issues, records_processed
 
 
-def _validate_guide_rna(data: Union[Dict, List[Dict]], strict: bool) -> tuple[List[ValidationIssue], int]:
+def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: bool) -> tuple[List[ValidationIssue], int]:
     """Validate guide RNA records using Pydantic"""
     issues = []
     records_processed = 0
     
-    # Convert single dict to list
-    records = [data] if isinstance(data, dict) else data
+    # FIXED: Convert DataFrame to list of dicts
+    if isinstance(data, pd.DataFrame):
+        # Check for empty DataFrame
+        if data.empty:
+            issues.append(ValidationIssue(
+                field="dataframe",
+                message="Empty DataFrame - no records to validate",
+                severity=ValidationSeverity.ERROR
+            ))
+            return issues, 0
+        records = data.to_dict('records')
+    elif isinstance(data, dict):
+        records = [data]
+    else:
+        records = data
+    
+    # Check for empty list
+    if not records:
+        issues.append(ValidationIssue(
+            field="records",
+            message="No records provided for validation",
+            severity=ValidationSeverity.ERROR
+        ))
+        return issues, 0
     
     for idx, record in enumerate(records):
         try:

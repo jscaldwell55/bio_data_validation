@@ -6,8 +6,15 @@ help:
 	@echo "Available commands:"
 	@echo "  make install         - Install production dependencies"
 	@echo "  make install-dev     - Install all dependencies including dev"
-	@echo "  make test           - Run tests"
+	@echo "  make test           - Run all pytest tests"
+	@echo "  make test-unit      - Run unit tests only (fast)"
+	@echo "  make test-integration - Run integration tests"
+	@echo "  make test-e2e       - Run end-to-end tests"
+	@echo "  make test-system    - Run system bash tests"
+	@echo "  make test-all       - Run ALL tests (pytest + system)"
 	@echo "  make test-cov       - Run tests with coverage report"
+	@echo "  make test-quick     - Run quick tests (no slow markers)"
+	@echo "  make test-failed    - Re-run only failed tests"
 	@echo "  make lint           - Run linters"
 	@echo "  make format         - Format code"
 	@echo "  make clean          - Clean build artifacts"
@@ -25,7 +32,8 @@ test:
 	poetry run pytest tests/ -v
 
 test-cov:
-	poetry run pytest tests/ --cov=src --cov-report=html --cov-report=term
+	poetry run pytest tests/ --cov=src --cov-report=html --cov-report=term-missing
+	@echo "📊 Coverage report generated: htmlcov/index.html"
 
 test-unit:
 	poetry run pytest tests/unit/ -v
@@ -39,6 +47,42 @@ test-e2e:
 test-performance:
 	poetry run pytest tests/performance/ -v -m performance
 
+# NEW: Run system bash tests
+test-system:
+	@echo "🔧 Running system component tests..."
+	@bash tests/system/test_components.sh
+	@echo "🔧 Running system E2E workflow tests..."
+	@bash tests/system/test_e2e_workflow.sh
+	@echo "✅ System tests complete!"
+
+# NEW: Run ALL tests (pytest + system)
+test-all: test test-system
+	@echo "✅ All test suites complete!"
+
+# NEW: Run quick tests (skip slow markers)
+test-quick:
+	poetry run pytest tests/unit/ -v -m "not slow"
+
+# NEW: Re-run only failed tests from last run
+test-failed:
+	poetry run pytest --lf -v
+
+# NEW: Run tests with verbose debugging
+test-debug:
+	poetry run pytest tests/ -vv --showlocals --tb=long
+
+# NEW: Run specific test file (usage: make test-file FILE=tests/unit/test_something.py)
+test-file:
+	@if [ -z "$(FILE)" ]; then \
+		echo "❌ Usage: make test-file FILE=tests/unit/test_something.py"; \
+		exit 1; \
+	fi
+	poetry run pytest $(FILE) -vv
+
+# NEW: Watch mode for TDD (requires pytest-watch)
+test-watch:
+	poetry run ptw tests/ -- -v
+
 lint:
 	poetry run black --check src tests
 	poetry run isort --check-only src tests
@@ -50,12 +94,12 @@ format:
 	poetry run isort src tests
 
 clean:
-	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 	find . -type f -name "*.pyo" -delete
-	find . -type d -name "*.egg-info" -exec rm -rf {} +
-	find . -type d -name ".pytest_cache" -exec rm -rf {} +
-	find . -type d -name ".mypy_cache" -exec rm -rf {} +
+	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf htmlcov
 	rm -rf .coverage
 	rm -rf dist
@@ -73,3 +117,11 @@ dvc-setup:
 
 setup: install-dev dvc-setup
 	@echo "✅ Setup complete! Run 'make test' to verify installation."
+
+# NEW: Quick validation before commit
+pre-commit: format lint test-quick
+	@echo "✅ Pre-commit checks passed!"
+
+# NEW: CI simulation - runs what CI will run
+ci: lint test-cov
+	@echo "✅ CI simulation complete!"

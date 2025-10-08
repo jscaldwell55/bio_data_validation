@@ -2,32 +2,79 @@
 import time
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
+from pathlib import Path
 import logging
-import yaml
 
-from src.schemas.base_schemas import ValidationResult, ValidationIssue, ValidationSeverity
+from src.schemas.base_schemas import (
+    ConfigurableComponent,
+    ValidationResult,
+    ValidationIssue,
+    ValidationSeverity
+)
 
 logger = logging.getLogger(__name__)
 
-class RuleValidator:
+class RuleValidator(ConfigurableComponent):
     """
     Vectorized rule-based validator that combines consistency, duplicate detection,
     and bias detection using pandas operations.
     """
     
-    def __init__(self, rules_config_path: str):
+    def __init__(
+        self,
+        config: Optional[Union[str, Path, Dict[str, Any]]] = None,
+        **kwargs
+    ):
         """
-        Initialize with validation rules from YAML config.
-        
+        Initialize with validation rules from flexible configuration.
+
         Args:
-            rules_config_path: Path to validation rules YAML file
+            config: Can be:
+                - str/Path: Path to validation rules YAML file
+                - dict: Configuration dictionary (for testing)
+                - None: Use default configuration
+            **kwargs: Additional config overrides
         """
-        with open(rules_config_path, 'r') as f:
-            self.rules_config = yaml.safe_load(f)
-        
-        self.rules = self.rules_config.get('rules', {})
+        # Initialize parent with base config
+        super().__init__(config, **kwargs)
+
+        # Extract rules from config
+        self.rules = self.config.get('rules', {})
         logger.info(f"Loaded {len(self.rules)} validation rules")
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default rules configuration with sensible defaults for biological data"""
+        return {
+            'rules': {
+                'consistency': {
+                    'required_columns': [],
+                    'column_types': {},
+                    'value_ranges': {
+                        'gc_content': {'min': 0.0, 'max': 1.0},
+                        'efficiency_score': {'min': 0.0, 'max': 1.0},
+                        'on_target_score': {'min': 0.0, 'max': 1.0},
+                        'off_target_score': {'min': 0.0, 'max': 1.0}
+                    },
+                    'cross_column': [
+                        {'column1': 'end_position', 'operator': '>', 'column2': 'start_position'}
+                    ]
+                },
+                'duplicates': {
+                    'check_duplicate_rows': True,
+                    'unique_columns': ['guide_id'],
+                    'sequence_similarity_threshold': 0.95,
+                    'sequence_columns': []
+                },
+                'bias': {
+                    'target_column': None,
+                    'imbalance_threshold': 0.3,
+                    'missing_value_threshold': 0.1,
+                    'check_distribution_bias': []
+                },
+                'custom': []
+            }
+        }
     
     def validate(
         self,
@@ -135,19 +182,19 @@ class RuleValidator:
                     if not violations.empty:
                         issues.append(ValidationIssue(
                             field=col,
-                            message=f"{len(violations)} values below minimum {min_val}",
-                            severity=ValidationSeverity.WARNING,
+                            message=f"{len(violations)} values outside valid range (below minimum {min_val})",
+                            severity=ValidationSeverity.ERROR,
                             rule_id="CONS_003",
                             metadata={"violation_count": len(violations)}
                         ))
-                
+
                 if max_val is not None:
                     violations = df[df[col] > max_val]
                     if not violations.empty:
                         issues.append(ValidationIssue(
                             field=col,
-                            message=f"{len(violations)} values above maximum {max_val}",
-                            severity=ValidationSeverity.WARNING,
+                            message=f"{len(violations)} values outside valid range (above maximum {max_val})",
+                            severity=ValidationSeverity.ERROR,
                             rule_id="CONS_004",
                             metadata={"violation_count": len(violations)}
                         ))
@@ -168,7 +215,7 @@ class RuleValidator:
                     issues.append(ValidationIssue(
                         field=f"{col1},{col2}",
                         message=f"Cross-column rule violated: {col1} {operator} {col2}",
-                        severity=ValidationSeverity.WARNING,
+                        severity=ValidationSeverity.ERROR,
                         rule_id="CONS_005",
                         metadata={"violation_count": len(violations)}
                     ))

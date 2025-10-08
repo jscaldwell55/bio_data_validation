@@ -15,7 +15,7 @@ Base = declarative_base()
 class ValidationRun(Base):
     """Validation run record"""
     __tablename__ = "validation_runs"
-    
+
     id = Column(String, primary_key=True)
     dataset_id = Column(String, index=True)
     format_type = Column(String)
@@ -27,13 +27,30 @@ class ValidationRun(Base):
     requires_human_review = Column(Boolean, default=False)
     short_circuited = Column(Boolean, default=False)
     report_json = Column(JSON)
-    metadata = Column(JSON)
+    dataset_metadata = Column(JSON)
+
+    def __init__(self, validation_id=None, **kwargs):
+        """
+        Allow validation_id to be passed and map to id.
+
+        Args:
+            validation_id: Optional validation ID (maps to id column)
+            **kwargs: Other column values
+        """
+        if validation_id is not None:
+            kwargs['id'] = validation_id
+        super().__init__(**kwargs)
+
+    # Property for backward compatibility
+    @property
+    def validation_id(self):
+        return self.id
 
 
 class ValidationIssue(Base):
     """Individual validation issue"""
     __tablename__ = "validation_issues"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     validation_run_id = Column(String, index=True)
     stage = Column(String)
@@ -42,14 +59,26 @@ class ValidationIssue(Base):
     message = Column(Text)
     severity = Column(String, index=True)
     rule_id = Column(String, nullable=True)
-    metadata = Column(JSON)
+    issue_metadata = Column(JSON)  # FIXED: Renamed from 'metadata' to 'issue_metadata'
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __init__(self, validation_id=None, **kwargs):
+        """
+        Allow validation_id to be passed and map to validation_run_id.
+
+        Args:
+            validation_id: Optional validation ID (maps to validation_run_id)
+            **kwargs: Other column values
+        """
+        if validation_id is not None:
+            kwargs['validation_run_id'] = validation_id
+        super().__init__(**kwargs)
 
 
 class HumanReview(Base):
     """Human review record"""
     __tablename__ = "human_reviews"
-    
+
     id = Column(String, primary_key=True)
     validation_run_id = Column(String, index=True)
     reviewer_id = Column(String)
@@ -59,7 +88,19 @@ class HumanReview(Base):
     reviewed_at = Column(DateTime, nullable=True)
     decision = Column(String, nullable=True)
     feedback = Column(JSON)
-    metadata = Column(JSON)
+    review_metadata = Column(JSON)  # FIXED: Renamed from 'metadata' to 'review_metadata'
+
+    def __init__(self, validation_id=None, **kwargs):
+        """
+        Allow validation_id to be passed and map to validation_run_id.
+
+        Args:
+            validation_id: Optional validation ID (maps to validation_run_id)
+            **kwargs: Other column values
+        """
+        if validation_id is not None:
+            kwargs['validation_run_id'] = validation_id
+        super().__init__(**kwargs)
 
 
 class DatabaseClient:
@@ -98,7 +139,7 @@ class DatabaseClient:
                 dataset_id=dataset_id,
                 format_type=format_type,
                 status="pending",
-                metadata=metadata or {}
+                dataset_metadata=metadata or {}
             )
             session.add(run)
             session.commit()
@@ -150,7 +191,7 @@ class DatabaseClient:
                         message=issue.get("message"),
                         severity=issue.get("severity"),
                         rule_id=issue.get("rule_id"),
-                        metadata=issue.get("metadata", {})
+                        issue_metadata=issue.get("metadata", {})
                     )
                     session.add(db_issue)
             
@@ -205,7 +246,7 @@ class DatabaseClient:
                 reviewer_id="pending",
                 status="pending",
                 priority=priority,
-                metadata=metadata or {}
+                review_metadata=metadata or {}
             )
             session.add(review)
             session.commit()

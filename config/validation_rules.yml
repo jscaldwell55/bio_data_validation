@@ -1,17 +1,23 @@
 # config/validation_rules.yml
+# Validation rules configuration
+
 rules:
   consistency:
+    # Required columns for all datasets
     required_columns:
       - id
       - sequence
       - organism
     
+    # Expected data types for columns
     column_types:
       id: string
       sequence: string
       gc_content: float
       length: int
+      efficiency_score: float
     
+    # Value range constraints
     value_ranges:
       gc_content:
         min: 0.0
@@ -23,29 +29,45 @@ rules:
         min: 0.0
         max: 1.0
     
+    # Cross-column validation rules
     cross_column:
       - column1: start_position
         operator: "<"
         column2: end_position
   
   duplicates:
+    # Check for duplicate rows
     check_duplicate_rows: true
+    
+    # Columns that must be unique
     unique_columns:
       - id
       - guide_id
+    
+    # Columns to check for sequence duplicates
     sequence_columns:
       - sequence
+    
+    # Similarity threshold for near-duplicate sequences
     sequence_similarity_threshold: 0.95
   
   bias:
+    # Column containing class labels
     target_column: label
+    
+    # Class imbalance threshold (minority class < this ratio)
     imbalance_threshold: 0.3
+    
+    # Missing value threshold (missing > this ratio triggers warning)
     missing_value_threshold: 0.1
+    
+    # Columns to check for distribution bias
     check_distribution_bias:
       - gc_content
       - efficiency_score
   
   custom:
+    # Custom validation rules using pandas expressions
     - id: CUSTOM_001
       expression: "sequence.str.len() >= 18"
       field: sequence
@@ -56,4 +78,10 @@ rules:
       expression: "not sequence.str.contains('TTTT')"
       field: sequence
       message: "Sequence contains poly-T stretch"
+      severity: warning
+    
+    - id: CUSTOM_003
+      expression: "gc_content.between(0.3, 0.8)"
+      field: gc_content
+      message: "GC content outside acceptable range (30-80%)"
       severity: warning

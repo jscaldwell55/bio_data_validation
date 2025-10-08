@@ -1,4 +1,6 @@
 # config/policy_config.yml
+# Policy configuration for validation decisions
+
 decision_matrix:
   # Thresholds for automated decisions
   critical_threshold: 1      # Any critical issues = reject
@@ -18,28 +20,28 @@ policies:
     name: "Critical Data Integrity"
     description: "Any critical integrity issues result in rejection"
     condition: "severity.critical > 0"
-    action: "REJECT"
+    action: "rejected"  # FIXED: lowercase to match Decision enum
     priority: 1
   
   - id: POL_002
     name: "High Error Rate"
     description: "High number of errors indicates systemic issues"
     condition: "severity.error >= 5"
-    action: "REJECT"
+    action: "rejected"  # FIXED: lowercase to match Decision enum
     priority: 2
   
   - id: POL_003
     name: "Moderate Issues"
     description: "Some issues present but data may be usable with caution"
     condition: "severity.warning >= 3 AND severity.error < 5"
-    action: "CONDITIONAL_ACCEPT"
+    action: "conditional_accept"  # FIXED: lowercase with underscore
     priority: 3
   
   - id: POL_004
     name: "Clean Data"
     description: "Minimal or no issues detected"
     condition: "severity.error == 0 AND severity.warning < 3"
-    action: "ACCEPT"
+    action: "accepted"  # FIXED: lowercase to match Decision enum
     priority: 4
 
 validation_workflow:
@@ -57,3 +59,10 @@ validation_workflow:
       validators: ["bio_rules", "bio_lookups"]
       parallel: true
       blocking: false
+
+# Decision rationale templates
+decision_rationales:
+  accepted: "All validation checks passed. No significant issues detected."
+  conditional_accept: "Validation completed with {warning_count} warnings. Data may be used with caution. Review recommended for critical applications."
+  rejected: "Validation failed with {error_count} errors and {critical_count} critical issues. Data quality is insufficient for use."
+  review_required: "Human review required due to: {review_reasons}"

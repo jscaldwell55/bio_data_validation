@@ -9,7 +9,8 @@ from src.schemas.base_schemas import ValidationResult, ValidationIssue, Validati
 
 logger = logging.getLogger(__name__)
 
-class BioRules:
+
+class BioRulesValidator:
     """
     Local biological plausibility checks that don't require external API calls.
     Optimized for speed with vectorized operations where possible.
@@ -70,8 +71,12 @@ class BioRules:
         
         execution_time = (time.time() - start_time) * 1000
         
-        has_errors = any(i.severity in [ValidationSeverity.ERROR, ValidationSeverity.CRITICAL] 
-                        for i in issues)
+        # FIXED: Only ERROR and CRITICAL cause validation to fail
+        # WARNINGS are informational but don't fail validation
+        has_critical_errors = any(
+            i.severity in [ValidationSeverity.ERROR, ValidationSeverity.CRITICAL] 
+            for i in issues
+        )
         
         if any(i.severity == ValidationSeverity.CRITICAL for i in issues):
             severity = ValidationSeverity.CRITICAL
@@ -84,7 +89,7 @@ class BioRules:
         
         return ValidationResult(
             validator_name="BioRules",
-            passed=not has_errors,
+            passed=not has_critical_errors,  # FIXED: Use correct variable name
             severity=severity,
             issues=issues,
             execution_time_ms=execution_time,
@@ -95,24 +100,70 @@ class BioRules:
     def _validate_guide_rna_biology(self, df: pd.DataFrame) -> List[ValidationIssue]:
         """Vectorized biological validation for guide RNAs"""
         issues = []
-        
-        # Validate guide length for nuclease type (vectorized)
-        if 'nuclease_type' in df.columns and 'sequence' in df.columns:
+
+        # Check for empty sequences (ERROR - data is invalid)
+        if 'sequence' in df.columns:
+            empty_seqs = df[df['sequence'].str.len() == 0]
+            if not empty_seqs.empty:
+                issues.append(ValidationIssue(
+                    field="sequence",
+                    message=f"{len(empty_seqs)} empty sequences detected",
+                    severity=ValidationSeverity.ERROR,
+                    rule_id="BIO_006",
+                    metadata={"count": len(empty_seqs)}
+                ))
+
+        # Check for invalid DNA characters (ERROR - data is invalid)
+        if 'sequence' in df.columns:
+            invalid_chars = df[~df['sequence'].str.upper().str.match(r'^[ATCGN]+$', na=False)]
+            if not invalid_chars.empty:
+                issues.append(ValidationIssue(
+                    field="sequence",
+                    message=f"{len(invalid_chars)} sequences contain invalid DNA characters",
+                    severity=ValidationSeverity.ERROR,
+                    rule_id="BIO_007",
+                    metadata={"count": len(invalid_chars)}
+                ))
+
+        # Check for RNA bases (Uracil) in DNA sequences (ERROR - wrong molecule type)
+        if 'sequence' in df.columns:
+            rna_in_dna = df[df['sequence'].str.contains('U', case=False, na=False)]
+            if not rna_in_dna.empty:
+                issues.append(ValidationIssue(
+                    field="sequence",
+                    message=f"{len(rna_in_dna)} sequences contain uracil (U) - RNA base in DNA sequence",
+                    severity=ValidationSeverity.ERROR,
+                    rule_id="BIO_008",
+                    metadata={"count": len(rna_in_dna)}
+                ))
+
+        # Validate guide length - split into critical and suboptimal
+        if 'sequence' in df.columns:
             df['seq_length'] = df['sequence'].str.len()
-            
-            for nuclease, (min_len, max_len) in self.optimal_lengths.items():
-                nuclease_mask = df['nuclease_type'] == nuclease
-                suboptimal = df[nuclease_mask & 
-                               ((df['seq_length'] < min_len) | (df['seq_length'] > max_len))]
-                
-                if not suboptimal.empty:
-                    issues.append(ValidationIssue(
-                        field="sequence",
-                        message=f"{len(suboptimal)} guides have suboptimal length for {nuclease} (optimal: {min_len}-{max_len}bp)",
-                        severity=ValidationSeverity.WARNING,
-                        rule_id="BIO_001",
-                        metadata={"count": len(suboptimal), "nuclease": nuclease}
-                    ))
+
+            # Critically short guides (<15bp) - ERROR (unusable)
+            critically_short = df[df['seq_length'] < 15]
+            if not critically_short.empty:
+                issues.append(ValidationIssue(
+                    field="sequence",
+                    message=f"{len(critically_short)} guides are critically short (<15bp) - likely unusable",
+                    severity=ValidationSeverity.ERROR,
+                    rule_id="BIO_001A",
+                    metadata={"count": len(critically_short)}
+                ))
+
+            # Suboptimal length guides - WARNING (usable but suboptimal)
+            # Either too short (15-18bp) or too long (21-30bp)
+            suboptimal = df[((df['seq_length'] >= 15) & (df['seq_length'] < 19)) |
+                           ((df['seq_length'] > 20) & (df['seq_length'] <= 30))]
+            if not suboptimal.empty:
+                issues.append(ValidationIssue(
+                    field="sequence",
+                    message=f"{len(suboptimal)} guides have suboptimal length (optimal: 19-20bp)",
+                    severity=ValidationSeverity.WARNING,
+                    rule_id="BIO_001B",
+                    metadata={"count": len(suboptimal)}
+                ))
         
         # Validate PAM sequences (vectorized where possible)
         if 'pam_sequence' in df.columns and 'nuclease_type' in df.columns:
@@ -228,3 +279,7 @@ class BioRules:
         seq_upper = sequence.upper()
         gc_count = seq_upper.count('G') + seq_upper.count('C')
         return gc_count / len(sequence)
+
+
+# Alias for backward compatibility
+BioRules = BioRulesValidator

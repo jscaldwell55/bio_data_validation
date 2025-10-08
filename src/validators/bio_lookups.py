@@ -12,7 +12,9 @@ from src.utils.batch_processor import BatchProcessor
 
 logger = logging.getLogger(__name__)
 
-class BioLookups:
+
+# FIXED: Added class alias for backward compatibility
+class BioLookupsValidator:
     """
     External biological database lookups with batching and rate limiting.
     Handles validation against NCBI, Ensembl, and other authoritative sources.
@@ -277,3 +279,7 @@ class BioLookups:
                     })
         
         return results
+
+
+# Alias for backward compatibility
+BioLookups = BioLookupsValidator
