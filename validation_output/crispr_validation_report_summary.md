@@ -1,14 +1,14 @@
 # Validation Report
 
-**Generated:** 2025-10-08 06:50:51
+**Generated:** 2025-10-08 08:50:38
 
 ## Summary
 
 - **Dataset ID:** CRISPR_SCREEN_2024_Q4
-- **Decision:** REJECTED
-- **Rationale:** Conditional accept: 3 error(s), 6 warning(s) require attention
+- **Decision:** CONDITIONAL_ACCEPT
+- **Rationale:** Conditional accept: 3 error(s), 6 warning(s) require review before production use
 - **Records:** 10
-- **Execution Time:** 0.41s
+- **Execution Time:** 31.57s
 - **Short-circuited:** False
 
 ## Issue Summary
@@ -22,7 +22,7 @@
 
 - **Status:** ✗ FAIL
 - **Issues:** 1
-- **Execution Time:** 2.8ms
+- **Execution Time:** 3.0ms
 
 #### Issues
 
@@ -32,7 +32,7 @@
 
 - **Status:** ✓ PASS
 - **Issues:** 1
-- **Execution Time:** 2.4ms
+- **Execution Time:** 3.2ms
 
 #### Issues
 
@@ -43,7 +43,7 @@
 
 - **Status:** ✗ FAIL
 - **Issues:** 6
-- **Execution Time:** 3.5ms
+- **Execution Time:** 2.5ms
 
 #### Issues
 
@@ -64,7 +64,7 @@
 
 - **Status:** ✓ PASS
 - **Issues:** 1
-- **Execution Time:** 300.5ms
+- **Execution Time:** 31556.7ms
 
 #### Issues
 
@@ -75,5 +75,5 @@
 
 - **Status:** ✗ FAIL
 - **Issues:** 0
-- **Execution Time:** 101.6ms
+- **Execution Time:** 0.3ms
 

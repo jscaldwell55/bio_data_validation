@@ -1,7 +1,7 @@
 {
-  "validation_id": "fb49bd44-94e1-4086-ae09-0e443aab0e16",
+  "validation_id": "864e292e-a490-455f-abc5-581baf534169",
   "dataset_id": "CRISPR_SCREEN_2024_Q4",
-  "start_time": 1759924250.727385,
+  "start_time": 1759931406.519082,
   "metadata": {
     "dataset_id": "CRISPR_SCREEN_2024_Q4",
     "format_type": "guide_rna",
@@ -19,7 +19,7 @@
   "stages": {
     "schema": {
       "validator_name": "SchemaValidator",
-      "timestamp": "2025-10-08 11:50:50.730306",
+      "timestamp": "2025-10-08 13:50:06.522169",
       "passed": false,
       "severity": "error",
       "issues": [
@@ -30,19 +30,19 @@
           "rule_id": null,
           "metadata": {},
           "stage": "schema",
-          "priority": "critical"
+          "priority": "high"
         }
       ],
       "metadata": {
         "schema_type": "guide_rna",
         "strict_mode": true
       },
-      "execution_time_ms": 2.8378963470458984,
+      "execution_time_ms": 3.0128955841064453,
       "records_processed": 6
     },
     "rules": {
       "validator_name": "RuleValidator",
-      "timestamp": "2025-10-08 11:50:50.732994",
+      "timestamp": "2025-10-08 13:50:06.525433",
       "passed": true,
       "severity": "warning",
       "issues": [
@@ -61,12 +61,12 @@
       "metadata": {
         "total_rules_applied": 4
       },
-      "execution_time_ms": 2.3660659790039062,
+      "execution_time_ms": 3.2100677490234375,
       "records_processed": 10
     },
     "bio_rules": {
       "validator_name": "BioRules",
-      "timestamp": "2025-10-08 11:50:50.737034",
+      "timestamp": "2025-10-08 13:50:06.528356",
       "passed": false,
       "severity": "error",
       "issues": [
@@ -79,7 +79,7 @@
             "count": 1
           },
           "stage": "bio_rules",
-          "priority": "critical"
+          "priority": "high"
         },
         {
           "field": "sequence",
@@ -102,7 +102,7 @@
             "nuclease": "SpCas9"
           },
           "stage": "bio_rules",
-          "priority": "critical"
+          "priority": "high"
         },
         {
           "field": "sequence",
@@ -141,12 +141,12 @@
       "metadata": {
         "data_type": "guide_rna"
       },
-      "execution_time_ms": 3.5440921783447266,
+      "execution_time_ms": 2.5131702423095703,
       "records_processed": 10
     },
     "bio_lookups": {
       "validator_name": "BioLookups",
-      "timestamp": "2025-10-08 11:50:51.036288",
+      "timestamp": "2025-10-08 13:50:38.085458",
       "passed": true,
       "severity": "warning",
       "issues": [
@@ -175,7 +175,7 @@
         "optimization": "batched_queries",
         "performance_improvement": "10x faster"
       },
-      "execution_time_ms": 300.5061149597168,
+      "execution_time_ms": 31556.723833084106,
       "records_processed": 10
     },
     "policy": {
@@ -183,11 +183,11 @@
       "passed": true,
       "severity": "info",
       "issues": [],
-      "execution_time_ms": 0.09131431579589844,
+      "execution_time_ms": 0.15115737915039062,
       "records_processed": 10,
       "metadata": {
         "decision": "conditional_accept",
-        "rationale": "Conditional accept: 3 error(s), 6 warning(s) require attention",
+        "rationale": "Conditional accept: 3 error(s), 6 warning(s) require review before production use",
         "requires_review": true,
         "severity_counts": {
           "critical": 0,
@@ -198,28 +198,32 @@
       }
     },
     "human_review": {
-      "status": "completed",
-      "decision": "rejected",
+      "status": "flagged_for_review",
       "reviewer_id": "biologist_expert",
       "reviewed_issues": 9,
       "total_issues": 9,
-      "execution_time_ms": 101.58324241638184,
-      "feedback": {
-        "type": "critical_issues_found",
-        "comments": "Reviewed 9 issues",
-        "corrected_issues": []
+      "execution_time_ms": 0.3058910369873047,
+      "priority_breakdown": {
+        "total_issues": 9,
+        "critical_count": 0,
+        "high_count": 3,
+        "medium_count": 6,
+        "low_count": 0
       },
-      "learned_patterns": 0
+      "recommended_action": "review_recommended",
+      "expert_notes": "3 high-priority issues noted - review before deployment",
+      "learned_patterns": 0,
+      "review_required": true
     }
   },
-  "final_decision": "rejected",
+  "final_decision": "conditional_accept",
   "requires_human_review": true,
-  "execution_time_seconds": 0.41086387634277344,
+  "execution_time_seconds": 31.567312717437744,
   "short_circuited": false,
-  "decision_rationale": "Conditional accept: 3 error(s), 6 warning(s) require attention",
+  "decision_rationale": "Conditional accept: 3 error(s), 6 warning(s) require review before production use",
   "api_configuration": {
     "ncbi_api_key_configured": true,
     "ncbi_rate_limit": "10 req/sec"
   },
-  "end_time": 1759924251.138251
+  "end_time": 1759931438.086397
 }

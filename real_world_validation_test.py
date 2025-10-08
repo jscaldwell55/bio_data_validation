@@ -287,6 +287,7 @@ def print_recommendations(report: dict):
     print_section("Recommendations")
     
     decision = report['final_decision']
+    severity_counts = report.get('stages', {}).get('policy', {}).get('metadata', {}).get('severity_counts', {})
     
     if decision == 'accepted':
         print(f"{Colors.GREEN}{Colors.BOLD}✓ Dataset quality is excellent!{Colors.END}")
@@ -295,22 +296,42 @@ def print_recommendations(report: dict):
         print(f"  {Colors.GREEN}•{Colors.END} Consider running production pipeline")
         
     elif decision == 'conditional_accept':
-        print(f"{Colors.YELLOW}{Colors.BOLD}⚠ Dataset has minor issues that should be reviewed:{Colors.END}")
+        print(f"{Colors.YELLOW}{Colors.BOLD}⚠ Dataset has issues that require review:{Colors.END}")
         
         # Get conditions from policy
         policy_stage = report.get('stages', {}).get('policy', {})
         conditions = policy_stage.get('metadata', {}).get('conditions', [])
         
+        # FIXED: Be specific about what needs review
+        if severity_counts.get('error', 0) > 0:
+            print(f"  {Colors.YELLOW}•{Colors.END} {severity_counts['error']} ERROR-level issues detected")
+            print(f"  {Colors.YELLOW}•{Colors.END} Fix errors before production deployment")
+        
+        if severity_counts.get('warning', 0) > 0:
+            print(f"  {Colors.YELLOW}•{Colors.END} {severity_counts['warning']} WARNING-level issues detected")
+            print(f"  {Colors.YELLOW}•{Colors.END} Review warnings for potential optimization")
+        
         if conditions:
+            print(f"\n  {Colors.BOLD}Conditions:{Colors.END}")
             for condition in conditions:
                 print(f"  {Colors.YELLOW}•{Colors.END} {condition}")
-        else:
-            print(f"  {Colors.YELLOW}•{Colors.END} Review all warnings before production use")
-            print(f"  {Colors.YELLOW}•{Colors.END} Consider filtering or correcting flagged records")
+        
+        print(f"\n  {Colors.YELLOW}→{Colors.END} Dataset may be usable after review and fixes")
         
     elif decision == 'rejected':
         print(f"{Colors.RED}{Colors.BOLD}✗ Dataset has critical issues - NOT RECOMMENDED for use:{Colors.END}")
-        print(f"  {Colors.RED}•{Colors.END} Fix all ERROR-level issues before proceeding")
+        
+        # FIXED: Be specific about why it's rejected
+        if severity_counts.get('critical', 0) > 0:
+            print(f"  {Colors.RED}•{Colors.END} {severity_counts['critical']} CRITICAL issue(s) detected")
+        
+        error_count = severity_counts.get('error', 0)
+        error_threshold = 5  # Should match policy config
+        
+        if error_count >= error_threshold:
+            print(f"  {Colors.RED}•{Colors.END} {error_count} errors exceed threshold ({error_threshold})")
+        
+        print(f"  {Colors.RED}•{Colors.END} Fix all critical/error-level issues before proceeding")
         print(f"  {Colors.RED}•{Colors.END} Review data collection and processing pipeline")
         print(f"  {Colors.RED}•{Colors.END} Consider re-generating dataset with corrections")
         
@@ -471,6 +492,54 @@ async def run_complete_validation():
         print(f"{Colors.RED}{Colors.BOLD}✗ DATASET REJECTED{Colors.END}")
         print(f"{Colors.RED}Critical issues detected - dataset should not be used.{Colors.END}")
         return 1
+    
+def print_validation_report(report: dict):
+    """Print comprehensive validation report"""
+    
+    print_section("Validation Results")
+    
+    # ADDED: Debug - show policy decision details
+    policy_stage = report.get('stages', {}).get('policy', {})
+    if 'metadata' in policy_stage:
+        severity_counts = policy_stage['metadata'].get('severity_counts', {})
+        policy_decision = policy_stage['metadata'].get('decision', 'unknown')
+        
+        print(f"\n{Colors.CYAN}[DEBUG] Policy Engine Output:{Colors.END}")
+        print(f"  Severity counts: {severity_counts}")
+        print(f"  Policy decision: {policy_decision}")
+        print(f"  Final decision: {report['final_decision']}")
+        print()
+    
+    # Overall decision
+    decision = report['final_decision']
+    decision_color = {
+        'accepted': Colors.GREEN,
+        'conditional_accept': Colors.YELLOW,
+        'rejected': Colors.RED,
+        'error': Colors.RED
+    }.get(decision, Colors.YELLOW)
+    
+    # ADDED: Better decision display
+    decision_display = decision.replace('_', ' ').upper()
+    
+    print(f"Decision: {decision_color}{Colors.BOLD}{decision_display}{Colors.END}")
+    print(f"Rationale: {report['decision_rationale']}")
+    print(f"Execution time: {Colors.BOLD}{report['execution_time_seconds']:.2f}s{Colors.END}")
+    print(f"Human review required: {Colors.BOLD}{report['requires_human_review']}{Colors.END}")
+    print(f"Short-circuited: {report.get('short_circuited', False)}")
+    
+    # ADDED: Show optimization stats if available
+    bio_lookups_stage = report.get('stages', {}).get('bio_lookups', {})
+    if 'metadata' in bio_lookups_stage:
+        metadata = bio_lookups_stage['metadata']
+        if 'api_calls_made' in metadata:
+            print(f"\n{Colors.CYAN}Performance Metrics:{Colors.END}")
+            print(f"  API calls made: {metadata.get('api_calls_made', 'N/A')}")
+            print(f"  Genes validated: {metadata.get('genes_validated', 'N/A')}")
+            print(f"  Optimization: {metadata.get('optimization', 'N/A')}")
+            print(f"  Improvement: {metadata.get('performance_improvement', 'N/A')}")
+    
+    # [Rest of the function remains the same...]
 
 
 if __name__ == "__main__":

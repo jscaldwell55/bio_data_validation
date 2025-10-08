@@ -1,4 +1,11 @@
 # src/agents/human_review_coordinator.py
+"""
+Human-in-the-loop review coordinator with active learning.
+
+This agent coordinates the human review process but does NOT make automatic
+decisions that override the policy engine. It only flags issues for review
+and learns from human feedback when it's provided.
+"""
 import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
@@ -46,7 +53,14 @@ class HumanReviewCoordinator:
     """
     Agent that coordinates human-in-the-loop review process.
     Uses active learning to prioritize and route issues to human experts.
-    This is a genuine agent - it learns and adapts based on human feedback.
+    
+    IMPORTANT: This agent does NOT make automatic decisions. It only:
+    1. Flags issues for human review
+    2. Prioritizes issues using active learning
+    3. Routes to appropriate experts
+    4. Learns from human feedback when provided
+    
+    The Policy Engine remains the authoritative decision-maker.
     """
     
     def __init__(self, config: Optional[HumanReviewConfig] = None):
@@ -174,7 +188,6 @@ class HumanReviewCoordinator:
             feedback_count = pattern.get("feedback_count", 0)
         
             # Auto-resolve if high confidence and sufficient feedback
-            # FIXED: Lower thresholds to match test expectations
             if confidence >= 0.8 and feedback_count >= 5:
                 decisions = pattern.get("decisions", [])
                 if decisions:
@@ -233,12 +246,16 @@ class HumanReviewCoordinator:
         """
         Coordinate human review process with active learning.
         
+        FIXED: This method no longer makes automatic decisions that override
+        the policy engine. It only flags issues for review and returns metadata
+        about what needs human attention.
+        
         Args:
             validation_report: Complete validation report
             dataset: Original dataset for context
             
         Returns:
-            Review result with human decision and feedback
+            Review result with status and metadata (NO automatic decision)
         """
         start_time = time.time()
         
@@ -258,30 +275,25 @@ class HumanReviewCoordinator:
         # Route to appropriate reviewer
         reviewer_id = self._route_to_reviewer(selected_issues)
         
-        # In production, this would integrate with actual review UI
-        # For now, we'll simulate the review process
-        review_result = await self._simulate_review(review_package, reviewer_id)
-        
-        # Learn from feedback
-        self._learn_from_feedback(review_result)
+        # Analyze the review package to provide recommendations
+        # But DON'T make an automatic decision
+        review_analysis = self._analyze_review_package(review_package)
         
         execution_time = (time.time() - start_time) * 1000
         
-        # FIXED: Ensure decision is lowercase string
-        decision = review_result.get("decision", "pending")
-        if hasattr(decision, 'value'):
-            decision = decision.value
-        decision = str(decision).lower()
-        
+        # FIXED: Return review metadata WITHOUT making a decision
+        # The policy engine's decision should stand
         return {
-            "status": "completed",
-            "decision": decision,
+            "status": "flagged_for_review",  # NOT "completed"
             "reviewer_id": reviewer_id,
             "reviewed_issues": len(selected_issues),
             "total_issues": len(prioritized_issues),
             "execution_time_ms": execution_time,
-            "feedback": review_result.get("feedback", {}),
-            "learned_patterns": len(self.learned_patterns)
+            "priority_breakdown": review_analysis["priority_breakdown"],
+            "recommended_action": review_analysis["recommended_action"],
+            "expert_notes": review_analysis["expert_notes"],
+            "learned_patterns": len(self.learned_patterns),
+            "review_required": True
         }
     
     def _count_severities_from_report(self, report: Dict[str, Any]) -> Dict[str, int]:
@@ -326,7 +338,12 @@ class HumanReviewCoordinator:
         return all_issues
     
     def _calculate_priority(self, issue: Dict[str, Any]) -> ReviewPriority:
-        """Calculate review priority for an issue"""
+        """
+        Calculate review priority for an issue.
+        
+        FIXED: Errors are HIGH priority, not CRITICAL.
+        Only true critical severity issues should be CRITICAL priority.
+        """
         severity = issue.get("severity", "info")
         if hasattr(severity, 'value'):
             severity = severity.value
@@ -336,9 +353,8 @@ class HumanReviewCoordinator:
         if severity == "critical":
             return ReviewPriority.CRITICAL
         elif severity == "error":
-            # Check if error is novel
-            if self._is_novel_error(issue):
-                return ReviewPriority.CRITICAL
+            # FIXED: Errors are HIGH, not CRITICAL
+            # Even novel errors should not be escalated to CRITICAL
             return ReviewPriority.HIGH
         elif severity == "warning":
             return ReviewPriority.MEDIUM
@@ -451,6 +467,8 @@ class HumanReviewCoordinator:
                 "total_issues": len(selected_issues),
                 "critical_count": sum(1 for i in selected_issues if i.get("priority") == ReviewPriority.CRITICAL),
                 "high_count": sum(1 for i in selected_issues if i.get("priority") == ReviewPriority.HIGH),
+                "medium_count": sum(1 for i in selected_issues if i.get("priority") == ReviewPriority.MEDIUM),
+                "low_count": sum(1 for i in selected_issues if i.get("priority") == ReviewPriority.LOW),
             },
             "issues": selected_issues,
             "context": {
@@ -459,6 +477,43 @@ class HumanReviewCoordinator:
             },
             "sample_data": self._extract_sample_data(dataset, selected_issues),
             "recommendations": self._generate_recommendations(selected_issues)
+        }
+    
+    def _analyze_review_package(
+        self,
+        review_package: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Analyze review package and provide recommendations.
+        
+        FIXED: This does NOT make a decision, only provides analysis.
+        """
+        summary = review_package["summary"]
+        critical_count = summary["critical_count"]
+        high_count = summary["high_count"]
+        medium_count = summary["medium_count"]
+        
+        # Provide analysis without making a decision
+        if critical_count > 0:
+            recommended_action = "urgent_review_required"
+            expert_notes = f"{critical_count} critical-severity issues require immediate expert attention"
+        elif high_count > 5:
+            recommended_action = "thorough_review_recommended"
+            expert_notes = f"{high_count} high-priority issues should be reviewed before production use"
+        elif high_count > 0:
+            recommended_action = "review_recommended"
+            expert_notes = f"{high_count} high-priority issues noted - review before deployment"
+        elif medium_count > 0:
+            recommended_action = "optional_review"
+            expert_notes = f"{medium_count} medium-priority warnings - review if time permits"
+        else:
+            recommended_action = "no_action_required"
+            expert_notes = "Only minor issues detected"
+        
+        return {
+            "priority_breakdown": summary,
+            "recommended_action": recommended_action,
+            "expert_notes": expert_notes
         }
     
     def _route_to_reviewer(self, issues: List[Dict[str, Any]]) -> str:
@@ -476,50 +531,13 @@ class HumanReviewCoordinator:
         else:
             return "quality_specialist"
     
-    async def _simulate_review(
-        self,
-        review_package: Dict[str, Any],
-        reviewer_id: str
-    ) -> Dict[str, Any]:
-        """
-        Simulate human review process.
-        In production, this would integrate with actual review UI.
-        """
-        # Simulate review time
-        await asyncio.sleep(0.1)
-        
-        # Simulated decision based on issue severity
-        critical_count = review_package["summary"]["critical_count"]
-        high_count = review_package["summary"]["high_count"]
-        
-        if critical_count > 0:
-            decision = "rejected"
-            feedback_type = "critical_issues_found"
-        elif high_count > 5:
-            decision = "rejected"
-            feedback_type = "too_many_high_priority_issues"
-        elif high_count > 0:
-            decision = "conditional_accept"
-            feedback_type = "acceptable_with_corrections"
-        else:
-            decision = "accepted"
-            feedback_type = "minor_issues_acceptable"
-        
-        return {
-            "decision": decision,
-            "reviewer_id": reviewer_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "feedback": {
-                "type": feedback_type,
-                "comments": f"Reviewed {len(review_package['issues'])} issues",
-                "corrected_issues": []  # Would contain human corrections
-            }
-        }
-    
     def _learn_from_feedback(self, review_result: Dict[str, Any]):
         """
         Learn from human feedback to improve future routing and prioritization.
         Implements RLHF-style learning.
+        
+        Note: This is called when REAL human feedback is provided through
+        the capture_feedback() method, not from simulated reviews.
         """
         feedback = review_result.get("feedback", {})
         
@@ -538,12 +556,14 @@ class HumanReviewCoordinator:
             pattern = self.learned_patterns[signature]
             pattern["seen_count"] += 1
             pattern["feedback_count"] += 1
-            pattern["decisions"].append(review_result.get("decision"))
             
-            # Calculate consistency
-            if len(pattern["decisions"]) > 1:
-                most_common = max(set(pattern["decisions"]), key=pattern["decisions"].count)
-                pattern["consistency"] = pattern["decisions"].count(most_common) / len(pattern["decisions"])
+            if "decision" in review_result:
+                pattern["decisions"].append(review_result.get("decision"))
+                
+                # Calculate consistency
+                if len(pattern["decisions"]) > 1:
+                    most_common = max(set(pattern["decisions"]), key=pattern["decisions"].count)
+                    pattern["consistency"] = pattern["decisions"].count(most_common) / len(pattern["decisions"])
         
         self.logger.info(f"Learned from feedback. Total patterns: {len(self.learned_patterns)}")
     

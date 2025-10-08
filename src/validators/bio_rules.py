@@ -152,7 +152,7 @@ class BioRulesValidator:
                     metadata={"count": len(critically_short)}
                 ))
 
-            # FIXED: Critically long guides (>30bp) - ERROR (unusable)
+            # Critically long guides (>30bp) - ERROR (unusable)
             critically_long = df[df['seq_length'] > 30]
             if not critically_long.empty:
                 issues.append(ValidationIssue(
@@ -181,7 +181,7 @@ class BioRulesValidator:
             for nuclease, pattern in self.pam_patterns.items():
                 nuclease_mask = df['nuclease_type'] == nuclease
                 if nuclease_mask.any():
-                    # FIXED: Use proper regex matching with upper case
+                    # Use proper regex matching with upper case
                     invalid_pam = df[nuclease_mask & 
                                     ~df['pam_sequence'].str.upper().str.match(pattern, na=False)]
                     
@@ -208,7 +208,7 @@ class BioRulesValidator:
                     metadata={"count": len(suboptimal_gc)}
                 ))
         
-        # FIXED: Check for poly-T stretches (vectorized) - case insensitive
+        # Check for poly-T stretches (vectorized) - case insensitive
         if 'sequence' in df.columns:
             poly_t = df[df['sequence'].str.upper().str.contains('TTTT', na=False)]
             if not poly_t.empty:
@@ -220,10 +220,18 @@ class BioRulesValidator:
                     metadata={"count": len(poly_t)}
                 ))
         
-        # Check for homopolymer runs (vectorized)
+        # FIXED: Check for homopolymer runs (vectorized) - NO MORE WARNING!
         if 'sequence' in df.columns:
-            homopolymer_pattern = r'([ATCG])\1{4,}'
-            homopolymer = df[df['sequence'].str.upper().str.contains(homopolymer_pattern, regex=True, na=False)]
+            # FIXED: Use non-capturing group (?:...) instead of capturing group (...)
+            # This prevents the pandas UserWarning about match groups
+            homopolymer_pattern = r'(?:A{5,}|T{5,}|C{5,}|G{5,})'
+            
+            homopolymer = df[df['sequence'].str.upper().str.contains(
+                homopolymer_pattern, 
+                regex=True,  # Explicitly declare this is a regex
+                na=False
+            )]
+            
             if not homopolymer.empty:
                 issues.append(ValidationIssue(
                     field="sequence",

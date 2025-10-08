@@ -171,12 +171,15 @@ class ValidationOrchestrator:
             decision = self.policy_engine.make_decision(report)
             policy_execution_time = (time.time() - policy_start) * 1000
 
+           
+
             # Ensure decision is always lowercase string
             decision_value = decision["decision"]
             if isinstance(decision_value, Decision):
                 decision_value = decision_value.value
             decision_value = decision_value.lower()
-            
+
+
             report["final_decision"] = decision_value
             report["decision_rationale"] = decision["rationale"]
             report["requires_human_review"] = decision["requires_review"]
@@ -197,7 +200,7 @@ class ValidationOrchestrator:
                 }
             }
             
-            # Stage 6: Human Review if needed
+            # # Stage 6: Human Review if needed
             if report["requires_human_review"]:
                 self.logger.info(f"Dataset {metadata.dataset_id} flagged for human review")
                 review_result = await self.human_review_coordinator.coordinate_review(
@@ -205,12 +208,17 @@ class ValidationOrchestrator:
                     df
                 )
                 report["stages"]["human_review"] = review_result
-                # Update decision if human review overrides
-                if "decision" in review_result:
+    
+             # FIXED: Don't override policy decision from simulated review
+                # Only override if there's a REAL completed human review with a decision
+                if "decision" in review_result and review_result.get("status") == "completed":
+                    # This would only happen in production with real human review
                     review_decision = review_result["decision"]
                     if isinstance(review_decision, Decision):
                         review_decision = review_decision.value
                     report["final_decision"] = review_decision.lower()
+                    report["decision_rationale"] = f"Human review override: {review_result.get('feedback', {}).get('comments', '')}"
+                    self.logger.info(f"Decision overridden by human review: {report['final_decision']}")
         
         except asyncio.TimeoutError:
             self.logger.error(f"Validation timeout for dataset {metadata.dataset_id}")
