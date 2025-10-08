@@ -1,0 +1,225 @@
+{
+  "validation_id": "fb49bd44-94e1-4086-ae09-0e443aab0e16",
+  "dataset_id": "CRISPR_SCREEN_2024_Q4",
+  "start_time": 1759924250.727385,
+  "metadata": {
+    "dataset_id": "CRISPR_SCREEN_2024_Q4",
+    "format_type": "guide_rna",
+    "record_count": 10,
+    "source": "in-house_design",
+    "organism": "human",
+    "experiment_type": "guide_rna",
+    "additional_metadata": {
+      "project": "Cancer Target Validation",
+      "researcher": "Dr. Smith",
+      "date": "2025-10-08",
+      "version": "1.0.0"
+    }
+  },
+  "stages": {
+    "schema": {
+      "validator_name": "SchemaValidator",
+      "timestamp": "2025-10-08 11:50:50.730306",
+      "passed": false,
+      "severity": "error",
+      "issues": [
+        {
+          "field": "record_5.pam_sequence",
+          "message": "Value error, Invalid PAM for SpCas9: AAA",
+          "severity": "error",
+          "rule_id": null,
+          "metadata": {},
+          "stage": "schema",
+          "priority": "critical"
+        }
+      ],
+      "metadata": {
+        "schema_type": "guide_rna",
+        "strict_mode": true
+      },
+      "execution_time_ms": 2.8378963470458984,
+      "records_processed": 6
+    },
+    "rules": {
+      "validator_name": "RuleValidator",
+      "timestamp": "2025-10-08 11:50:50.732994",
+      "passed": true,
+      "severity": "warning",
+      "issues": [
+        {
+          "field": "sequence",
+          "message": "Found 4 duplicate sequences",
+          "severity": "warning",
+          "rule_id": "DUP_003",
+          "metadata": {
+            "duplicate_count": 4
+          },
+          "stage": "rules",
+          "priority": "medium"
+        }
+      ],
+      "metadata": {
+        "total_rules_applied": 4
+      },
+      "execution_time_ms": 2.3660659790039062,
+      "records_processed": 10
+    },
+    "bio_rules": {
+      "validator_name": "BioRules",
+      "timestamp": "2025-10-08 11:50:50.737034",
+      "passed": false,
+      "severity": "error",
+      "issues": [
+        {
+          "field": "sequence",
+          "message": "1 guides are critically short (<15bp) - likely unusable",
+          "severity": "error",
+          "rule_id": "BIO_001A",
+          "metadata": {
+            "count": 1
+          },
+          "stage": "bio_rules",
+          "priority": "critical"
+        },
+        {
+          "field": "sequence",
+          "message": "1 guides have suboptimal length (optimal: 19-20bp)",
+          "severity": "warning",
+          "rule_id": "BIO_001B",
+          "metadata": {
+            "count": 1
+          },
+          "stage": "bio_rules",
+          "priority": "medium"
+        },
+        {
+          "field": "pam_sequence",
+          "message": "1 invalid PAM sequences for SpCas9",
+          "severity": "error",
+          "rule_id": "BIO_002",
+          "metadata": {
+            "count": 1,
+            "nuclease": "SpCas9"
+          },
+          "stage": "bio_rules",
+          "priority": "critical"
+        },
+        {
+          "field": "sequence",
+          "message": "1 guides have suboptimal GC content (optimal: 40-70%)",
+          "severity": "warning",
+          "rule_id": "BIO_003",
+          "metadata": {
+            "count": 1
+          },
+          "stage": "bio_rules",
+          "priority": "medium"
+        },
+        {
+          "field": "sequence",
+          "message": "1 guides contain poly-T stretch (TTTT), may cause transcription termination",
+          "severity": "warning",
+          "rule_id": "BIO_004",
+          "metadata": {
+            "count": 1
+          },
+          "stage": "bio_rules",
+          "priority": "medium"
+        },
+        {
+          "field": "sequence",
+          "message": "1 guides contain homopolymer runs (5+ identical bases)",
+          "severity": "warning",
+          "rule_id": "BIO_005",
+          "metadata": {
+            "count": 1
+          },
+          "stage": "bio_rules",
+          "priority": "medium"
+        }
+      ],
+      "metadata": {
+        "data_type": "guide_rna"
+      },
+      "execution_time_ms": 3.5440921783447266,
+      "records_processed": 10
+    },
+    "bio_lookups": {
+      "validator_name": "BioLookups",
+      "timestamp": "2025-10-08 11:50:51.036288",
+      "passed": true,
+      "severity": "warning",
+      "issues": [
+        {
+          "field": "target_gene",
+          "message": "1 ambiguous gene symbols (multiple matches)",
+          "severity": "warning",
+          "rule_id": "LOOKUP_002",
+          "metadata": {
+            "ambiguous_genes": [
+              "MYC (human): 3 matches"
+            ],
+            "total_ambiguous": 1
+          },
+          "stage": "bio_lookups",
+          "priority": "medium"
+        }
+      ],
+      "metadata": {
+        "validation_type": "gene_symbols",
+        "api_key_used": true,
+        "rate_limit": "10 req/sec",
+        "api_calls_made": 1,
+        "genes_validated": 10,
+        "batch_size": 50,
+        "optimization": "batched_queries",
+        "performance_improvement": "10x faster"
+      },
+      "execution_time_ms": 300.5061149597168,
+      "records_processed": 10
+    },
+    "policy": {
+      "validator_name": "PolicyEngine",
+      "passed": true,
+      "severity": "info",
+      "issues": [],
+      "execution_time_ms": 0.09131431579589844,
+      "records_processed": 10,
+      "metadata": {
+        "decision": "conditional_accept",
+        "rationale": "Conditional accept: 3 error(s), 6 warning(s) require attention",
+        "requires_review": true,
+        "severity_counts": {
+          "critical": 0,
+          "error": 3,
+          "warning": 6,
+          "info": 0
+        }
+      }
+    },
+    "human_review": {
+      "status": "completed",
+      "decision": "rejected",
+      "reviewer_id": "biologist_expert",
+      "reviewed_issues": 9,
+      "total_issues": 9,
+      "execution_time_ms": 101.58324241638184,
+      "feedback": {
+        "type": "critical_issues_found",
+        "comments": "Reviewed 9 issues",
+        "corrected_issues": []
+      },
+      "learned_patterns": 0
+    }
+  },
+  "final_decision": "rejected",
+  "requires_human_review": true,
+  "execution_time_seconds": 0.41086387634277344,
+  "short_circuited": false,
+  "decision_rationale": "Conditional accept: 3 error(s), 6 warning(s) require attention",
+  "api_configuration": {
+    "ncbi_api_key_configured": true,
+    "ncbi_rate_limit": "10 req/sec"
+  },
+  "end_time": 1759924251.138251
+}

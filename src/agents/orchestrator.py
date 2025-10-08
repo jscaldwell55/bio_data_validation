@@ -1,4 +1,5 @@
 # src/agents/orchestrator.py
+import os
 import asyncio
 import time
 import uuid
@@ -8,6 +9,7 @@ from enum import Enum
 import logging
 import pandas as pd
 from pathlib import Path
+from dotenv import load_dotenv
 
 from src.schemas.base_schemas import ValidationResult, ValidationSeverity, DatasetMetadata, Decision
 from src.validators.schema_validator import validate_schema, SchemaValidator
@@ -16,6 +18,9 @@ from src.validators.bio_rules import BioRulesValidator
 from src.validators.bio_lookups import BioLookupsValidator
 from src.engine.policy_engine import PolicyEngine
 from src.agents.human_review_coordinator import HumanReviewCoordinator
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,9 @@ class ValidationOrchestrator:
         self.config = config or OrchestrationConfig()
         self.logger = logging.getLogger("orchestrator")
     
+        # ADDED: Log API key status on startup
+        self._log_api_configuration()
+        
         # Initialize validators with flexible config
         rules_config = self.config.rules_config_path
         if rules_config is None:
@@ -53,7 +61,7 @@ class ValidationOrchestrator:
         
         self.rule_validator = RuleValidator(config=rules_config)
         self.bio_rules = BioRulesValidator()
-        self.bio_lookups = BioLookupsValidator()
+        self.bio_lookups = BioLookupsValidator()  # Will auto-detect API key
     
         # Initialize policy engine and human review coordinator
         policy_config = self.config.policy_config_path
@@ -64,6 +72,28 @@ class ValidationOrchestrator:
         self.human_review_coordinator = HumanReviewCoordinator()
         
         self.logger.info("ValidationOrchestrator initialized")
+    
+    def _log_api_configuration(self):
+        """ADDED: Log API key configuration status"""
+        ncbi_key = os.getenv('NCBI_API_KEY')
+        ensembl_url = os.getenv('ENSEMBL_API_URL', 'https://rest.ensembl.org')
+        
+        self.logger.info("=" * 60)
+        self.logger.info("External API Configuration")
+        self.logger.info("=" * 60)
+        
+        if ncbi_key:
+            masked_key = f"{ncbi_key[:8]}...{ncbi_key[-4:]}"
+            self.logger.info(f"✅ NCBI API Key: {masked_key}")
+            self.logger.info(f"   Rate Limit: 10 requests/second")
+            self.logger.info(f"   Performance: 3.3x faster than default")
+        else:
+            self.logger.warning("⚠️  NCBI API Key: Not configured")
+            self.logger.warning("   Rate Limit: 3 requests/second (default)")
+            self.logger.warning("   Add NCBI_API_KEY to .env for 3.3x speedup")
+        
+        self.logger.info(f"Ensembl API: {ensembl_url}")
+        self.logger.info("=" * 60)
     
     async def validate_dataset(
         self,
@@ -98,7 +128,12 @@ class ValidationOrchestrator:
             "requires_human_review": False,
             "execution_time_seconds": 0,
             "short_circuited": False,
-            "decision_rationale": ""
+            "decision_rationale": "",
+            # ADDED: Track API configuration in report
+            "api_configuration": {
+                "ncbi_api_key_configured": bool(os.getenv('NCBI_API_KEY')),
+                "ncbi_rate_limit": "10 req/sec" if os.getenv('NCBI_API_KEY') else "3 req/sec"
+            }
         }
         
         try:
@@ -111,7 +146,7 @@ class ValidationOrchestrator:
             if self.config.enable_short_circuit and not schema_result.passed:
                 self.logger.info("Short-circuiting: Schema validation failed")
                 report["short_circuited"] = True
-                report["final_decision"] = Decision.REJECTED.value  # FIXED: Use .value consistently
+                report["final_decision"] = Decision.REJECTED.value
                 report["decision_rationale"] = "Failed schema validation"
                 return self._finalize_report(report, start_time)
             
@@ -121,7 +156,7 @@ class ValidationOrchestrator:
             if self.config.enable_short_circuit and rule_result.severity == ValidationSeverity.CRITICAL:
                 self.logger.info("Short-circuiting: Critical rule violations detected")
                 report["short_circuited"] = True
-                report["final_decision"] = Decision.REJECTED.value  # FIXED: Use .value consistently
+                report["final_decision"] = Decision.REJECTED.value
                 report["decision_rationale"] = "Critical rule violations"
                 return self._finalize_report(report, start_time)
             
@@ -134,9 +169,9 @@ class ValidationOrchestrator:
             # Stage 5: Policy-based Decision
             policy_start = time.time()
             decision = self.policy_engine.make_decision(report)
-            policy_execution_time = (time.time() - policy_start) * 1000  # Convert to ms
+            policy_execution_time = (time.time() - policy_start) * 1000
 
-            # FIXED: Ensure decision is always lowercase string
+            # Ensure decision is always lowercase string
             decision_value = decision["decision"]
             if isinstance(decision_value, Decision):
                 decision_value = decision_value.value
@@ -179,13 +214,13 @@ class ValidationOrchestrator:
         
         except asyncio.TimeoutError:
             self.logger.error(f"Validation timeout for dataset {metadata.dataset_id}")
-            report["final_decision"] = "error"  # FIXED: lowercase 'error' for timeout
+            report["final_decision"] = "error"
             report["error"] = "Validation timeout"
             report["decision_rationale"] = "Validation timed out"
         
         except Exception as e:
             self.logger.exception(f"Orchestration error for dataset {metadata.dataset_id}: {str(e)}")
-            report["final_decision"] = "error"  # FIXED: lowercase 'error' for exceptions
+            report["final_decision"] = "error"
             report["error"] = str(e)
             report["decision_rationale"] = f"System error: {str(e)}"
         
@@ -206,7 +241,7 @@ class ValidationOrchestrator:
             strict=True
         )
         
-        # FIXED: Serialize result properly
+        # Serialize result properly
         result_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
         # Ensure severity is a string
         if 'severity' in result_dict and hasattr(result_dict['severity'], 'value'):
@@ -229,7 +264,7 @@ class ValidationOrchestrator:
             metadata.model_dump() if hasattr(metadata, 'model_dump') else metadata.dict()
         )
         
-        # FIXED: Serialize result properly
+        # Serialize result properly
         result_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
         # Ensure severity is a string
         if 'severity' in result_dict and hasattr(result_dict['severity'], 'value'):
@@ -259,7 +294,7 @@ class ValidationOrchestrator:
         bio_rules_result = results[0] if not isinstance(results[0], Exception) else self._create_error_result("BioRules", results[0])
         bio_lookups_result = results[1] if not isinstance(results[1], Exception) else self._create_error_result("BioLookups", results[1])
         
-        # FIXED: Properly serialize results
+        # Properly serialize results
         if isinstance(bio_rules_result, ValidationResult):
             bio_rules_dict = bio_rules_result.model_dump() if hasattr(bio_rules_result, 'model_dump') else bio_rules_result.dict()
             if 'severity' in bio_rules_dict and hasattr(bio_rules_dict['severity'], 'value'):
@@ -339,7 +374,7 @@ class ValidationOrchestrator:
         report["execution_time_seconds"] = time.time() - start_time
         report["end_time"] = time.time()
         
-        # FIXED: Ensure final_decision is lowercase string
+        # Ensure final_decision is lowercase string
         if report["final_decision"]:
             decision = report["final_decision"]
             if isinstance(decision, Decision):

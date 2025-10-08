@@ -223,7 +223,7 @@ class BioRulesValidator:
         # Check for homopolymer runs (vectorized)
         if 'sequence' in df.columns:
             homopolymer_pattern = r'([ATCG])\1{4,}'
-            homopolymer = df[df['sequence'].str.upper().str.contains(homopolymer_pattern, na=False)]
+            homopolymer = df[df['sequence'].str.upper().str.contains(homopolymer_pattern, regex=True, na=False)]
             if not homopolymer.empty:
                 issues.append(ValidationIssue(
                     field="sequence",
