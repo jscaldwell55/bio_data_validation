@@ -1,0 +1,59 @@
+# config/policy_config.yml
+decision_matrix:
+  # Thresholds for automated decisions
+  critical_threshold: 1      # Any critical issues = reject
+  error_threshold: 5         # 5+ errors = reject
+  warning_threshold: 10      # 10+ warnings = conditional accept
+  moderate_warning_threshold: 3  # 3+ warnings = conditional accept
+
+human_review_triggers:
+  on_critical: true          # Always review critical issues
+  error_count_threshold: 3   # Review if 3+ errors
+  warning_count_threshold: 15  # Review if 15+ warnings
+  confidence_threshold: 0.7  # Review if confidence < 70%
+  on_novel_errors: true      # Review novel/unknown error types
+
+policies:
+  - id: POL_001
+    name: "Critical Data Integrity"
+    description: "Any critical integrity issues result in rejection"
+    condition: "severity.critical > 0"
+    action: "REJECT"
+    priority: 1
+  
+  - id: POL_002
+    name: "High Error Rate"
+    description: "High number of errors indicates systemic issues"
+    condition: "severity.error >= 5"
+    action: "REJECT"
+    priority: 2
+  
+  - id: POL_003
+    name: "Moderate Issues"
+    description: "Some issues present but data may be usable with caution"
+    condition: "severity.warning >= 3 AND severity.error < 5"
+    action: "CONDITIONAL_ACCEPT"
+    priority: 3
+  
+  - id: POL_004
+    name: "Clean Data"
+    description: "Minimal or no issues detected"
+    condition: "severity.error == 0 AND severity.warning < 3"
+    action: "ACCEPT"
+    priority: 4
+
+validation_workflow:
+  # Define which validators run in which order
+  stages:
+    - name: "schema"
+      validators: ["schema_validator"]
+      blocking: true  # Failure stops workflow
+      
+    - name: "rules"
+      validators: ["rule_validator"]
+      blocking: false
+      
+    - name: "biological"
+      validators: ["bio_rules", "bio_lookups"]
+      parallel: true
+      blocking: false

@@ -1,0 +1,146 @@
+[tool.poetry]
+name = "bio-data-validation"
+version = "0.1.0"
+description = "Multi-agent data quality and validation system for bioinformatics"
+authors = ["Your Team <team@example.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# Core framework
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+# Data processing
+pandas = "^2.1.0"
+numpy = "^1.26.0"
+# Bioinformatics
+biopython = "^1.81"
+# API framework
+fastapi = "^0.104.0"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+# Database
+sqlalchemy = "^2.0.0"
+alembic = "^1.12.0"
+# Async HTTP
+aiohttp = "^3.9.0"
+# MLOps
+mlflow = "^2.8.0"
+dvc = {extras = ["s3"], version = "^3.30.0"}
+# Workflow orchestration
+prefect = "^2.14.0"
+# Configuration
+pyyaml = "^6.0.1"
+python-dotenv = "^1.0.0"
+# Monitoring
+prometheus-client = "^0.19.0"
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^7.4.0"
+pytest-cov = "^4.1.0"
+pytest-asyncio = "^0.21.0"
+pytest-mock = "^3.12.0"
+# Linting and formatting
+black = "^23.11.0"
+flake8 = "^6.1.0"
+mypy = "^1.7.0"
+isort = "^5.12.0"
+# Type stubs
+pandas-stubs = "^2.1.0"
+types-pyyaml = "^6.0.12"
+types-requests = "^2.31.0"
+# Pre-commit
+pre-commit = "^3.5.0"
+# Performance profiling
+memory-profiler = "^0.61.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "Bio.*",
+    "mlflow.*",
+    "dvc.*",
+    "prefect.*"
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html"
+]
+markers = [
+    "integration: Integration tests",
+    "e2e: End-to-end tests",
+    "performance: Performance tests"
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]

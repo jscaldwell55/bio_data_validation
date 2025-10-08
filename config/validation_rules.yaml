@@ -1,0 +1,59 @@
+# config/validation_rules.yml
+rules:
+  consistency:
+    required_columns:
+      - id
+      - sequence
+      - organism
+    
+    column_types:
+      id: string
+      sequence: string
+      gc_content: float
+      length: int
+    
+    value_ranges:
+      gc_content:
+        min: 0.0
+        max: 1.0
+      length:
+        min: 1
+        max: 1000000
+      efficiency_score:
+        min: 0.0
+        max: 1.0
+    
+    cross_column:
+      - column1: start_position
+        operator: "<"
+        column2: end_position
+  
+  duplicates:
+    check_duplicate_rows: true
+    unique_columns:
+      - id
+      - guide_id
+    sequence_columns:
+      - sequence
+    sequence_similarity_threshold: 0.95
+  
+  bias:
+    target_column: label
+    imbalance_threshold: 0.3
+    missing_value_threshold: 0.1
+    check_distribution_bias:
+      - gc_content
+      - efficiency_score
+  
+  custom:
+    - id: CUSTOM_001
+      expression: "sequence.str.len() >= 18"
+      field: sequence
+      message: "Sequence length must be at least 18bp"
+      severity: error
+    
+    - id: CUSTOM_002
+      expression: "not sequence.str.contains('TTTT')"
+      field: sequence
+      message: "Sequence contains poly-T stretch"
+      severity: warning

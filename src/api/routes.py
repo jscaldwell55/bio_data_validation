@@ -1,0 +1,347 @@
+# src/api/routes.py
+"""
+FastAPI routes for validation API.
+"""
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Query
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
+import uuid
+import asyncio
+from datetime import datetime
+import logging
+import pandas as pd
+from io import StringIO
+
+from src.api.models import (
+    ValidationRequest,
+    ValidationSubmitResponse,
+    ValidationStatusResponse,
+    ValidationReportResponse,
+    HealthResponse,
+    MetricsResponse,
+    BatchValidationRequest,
+    BatchValidationResponse,
+    ErrorResponse,
+    ValidationStatus,
+    Decision
+)
+from src.agents.orchestrator import ValidationOrchestrator, OrchestrationConfig
+from src.schemas.base_schemas import DatasetMetadata
+from src.monitoring.metrics import (
+    validation_requests_total,
+    validation_duration_seconds,
+    active_validations
+)
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Bio-Data Validation API",
+    description="Production-grade bioinformatics data validation service",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Logging
+logger = logging.getLogger(__name__)
+
+# In-memory storage for validation tasks (use Redis/DB in production)
+validation_tasks = {}
+validation_reports = {}
+
+# Initialize orchestrator
+orchestrator_config = OrchestrationConfig(
+    timeout_seconds=300,
+    enable_short_circuit=True,
+    enable_parallel_bio=True
+)
+orchestrator = ValidationOrchestrator(orchestrator_config)
+
+
+# Background task for validation
+async def run_validation_task(validation_id: str, request: ValidationRequest):
+    """Background task to run validation"""
+    try:
+        validation_tasks[validation_id] = {
+            "status": ValidationStatus.IN_PROGRESS,
+            "current_stage": "schema",
+            "progress_percent": 0
+        }
+        
+        active_validations.inc()
+        
+        # Convert data to DataFrame
+        if isinstance(request.data, list):
+            df = pd.DataFrame(request.data)
+        elif isinstance(request.data, dict):
+            df = pd.DataFrame([request.data])
+        elif isinstance(request.data, str):
+            # Parse string data (CSV or FASTA)
+            if request.format.value in ['csv', 'tabular']:
+                df = pd.read_csv(StringIO(request.data))
+            else:
+                df = request.data  # Pass as-is for FASTA/FASTQ
+        else:
+            raise ValueError(f"Unsupported data type: {type(request.data)}")
+        
+        # Create metadata
+        metadata = DatasetMetadata(
+            dataset_id=validation_id,
+            format_type=request.format.value,
+            record_count=len(df) if isinstance(df, pd.DataFrame) else 1,
+            **request.metadata
+        )
+        
+        # Update progress
+        validation_tasks[validation_id]["progress_percent"] = 20
+        
+        # Run validation
+        report = await orchestrator.validate_dataset(df, metadata)
+        
+        # Store report
+        validation_reports[validation_id] = report
+        
+        # Update task status
+        validation_tasks[validation_id] = {
+            "status": ValidationStatus.COMPLETED,
+            "current_stage": "complete",
+            "progress_percent": 100,
+            "completed_at": datetime.utcnow()
+        }
+        
+        # Record metrics
+        validation_requests_total.labels(
+            dataset_type=request.format.value,
+            decision=report["final_decision"]
+        ).inc()
+        
+        validation_duration_seconds.labels(
+            agent="orchestrator",
+            stage="complete"
+        ).observe(report["execution_time_seconds"])
+        
+    except asyncio.TimeoutError:
+        validation_tasks[validation_id] = {
+            "status": ValidationStatus.TIMEOUT,
+            "error": "Validation timeout"
+        }
+        logger.error(f"Validation {validation_id} timed out")
+        
+    except Exception as e:
+        validation_tasks[validation_id] = {
+            "status": ValidationStatus.FAILED,
+            "error": str(e)
+        }
+        logger.exception(f"Validation {validation_id} failed: {str(e)}")
+        
+    finally:
+        active_validations.dec()
+
+
+# Routes
+@app.get("/", response_model=dict)
+async def root():
+    """Root endpoint"""
+    return {
+        "service": "Bio-Data Validation API",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint"""
+    return HealthResponse(
+        status="healthy",
+        version="0.1.0",
+        components={
+            "orchestrator": "healthy",
+            "database": "healthy",
+            "api": "healthy"
+        }
+    )
+
+
+@app.post("/api/v1/validate", response_model=ValidationSubmitResponse, status_code=202)
+async def submit_validation(
+    request: ValidationRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Submit a dataset for validation.
+    Returns validation ID for status polling.
+    """
+    validation_id = str(uuid.uuid4())
+    
+    # Initialize task
+    validation_tasks[validation_id] = {
+        "status": ValidationStatus.PENDING,
+        "submitted_at": datetime.utcnow()
+    }
+    
+    # Schedule background validation
+    background_tasks.add_task(run_validation_task, validation_id, request)
+    
+    return ValidationSubmitResponse(
+        validation_id=validation_id,
+        status=ValidationStatus.PENDING,
+        estimated_completion_seconds=30
+    )
+
+
+@app.get("/api/v1/validate/{validation_id}", response_model=ValidationStatusResponse)
+async def get_validation_status(validation_id: str):
+    """Get validation status and results"""
+    if validation_id not in validation_tasks:
+        raise HTTPException(status_code=404, detail="Validation not found")
+    
+    task = validation_tasks[validation_id]
+    report = validation_reports.get(validation_id)
+    
+    return ValidationStatusResponse(
+        validation_id=validation_id,
+        status=task["status"],
+        progress_percent=task.get("progress_percent"),
+        current_stage=task.get("current_stage"),
+        submitted_at=task.get("submitted_at", datetime.utcnow()),
+        completed_at=task.get("completed_at"),
+        report=report,
+        error=task.get("error")
+    )
+
+
+@app.post("/api/v1/validate/file", response_model=ValidationSubmitResponse, status_code=202)
+async def validate_file(
+    file: UploadFile = File(...),
+    format: str = Query(..., description="File format (fasta, csv, etc.)"),
+    background_tasks: BackgroundTasks = None
+):
+    """Upload and validate a file"""
+    validation_id = str(uuid.uuid4())
+    
+    try:
+        # Read file content
+        content = await file.read()
+        content_str = content.decode('utf-8')
+        
+        # Create validation request
+        request = ValidationRequest(
+            format=format,
+            data=content_str,
+            metadata={"filename": file.filename}
+        )
+        
+        # Initialize task
+        validation_tasks[validation_id] = {
+            "status": ValidationStatus.PENDING,
+            "submitted_at": datetime.utcnow()
+        }
+        
+        # Schedule validation
+        background_tasks.add_task(run_validation_task, validation_id, request)
+        
+        return ValidationSubmitResponse(
+            validation_id=validation_id,
+            status=ValidationStatus.PENDING
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"File processing error: {str(e)}")
+
+
+@app.post("/api/v1/validate/batch", response_model=BatchValidationResponse)
+async def submit_batch_validation(
+    request: BatchValidationRequest,
+    background_tasks: BackgroundTasks
+):
+    """Submit multiple datasets for validation"""
+    batch_id = str(uuid.uuid4())
+    validation_ids = []
+    
+    for dataset_request in request.datasets:
+        validation_id = str(uuid.uuid4())
+        validation_ids.append(validation_id)
+        
+        validation_tasks[validation_id] = {
+            "status": ValidationStatus.PENDING,
+            "submitted_at": datetime.utcnow(),
+            "batch_id": batch_id
+        }
+        
+        background_tasks.add_task(run_validation_task, validation_id, dataset_request)
+    
+    return BatchValidationResponse(
+        batch_id=batch_id,
+        total_datasets=len(request.datasets),
+        validation_ids=validation_ids,
+        status=ValidationStatus.PENDING
+    )
+
+
+@app.get("/api/v1/metrics", response_model=MetricsResponse)
+async def get_metrics():
+    """Get system metrics"""
+    total = len(validation_tasks)
+    completed = sum(1 for t in validation_tasks.values() if t["status"] == ValidationStatus.COMPLETED)
+    
+    return MetricsResponse(
+        total_validations=total,
+        validations_today=total,  # Simplified - would query DB in production
+        average_execution_time_seconds=5.2,  # Would calculate from actual data
+        success_rate_percent=(completed / total * 100) if total > 0 else 0,
+        active_validations=sum(1 for t in validation_tasks.values() if t["status"] == ValidationStatus.IN_PROGRESS),
+        human_reviews_pending=0  # Would query from HumanReviewCoordinator
+    )
+
+
+@app.delete("/api/v1/validate/{validation_id}")
+async def cancel_validation(validation_id: str):
+    """Cancel a pending validation"""
+    if validation_id not in validation_tasks:
+        raise HTTPException(status_code=404, detail="Validation not found")
+    
+    task = validation_tasks[validation_id]
+    if task["status"] != ValidationStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Cannot cancel non-pending validation")
+    
+    validation_tasks[validation_id]["status"] = ValidationStatus.FAILED
+    validation_tasks[validation_id]["error"] = "Cancelled by user"
+    
+    return {"message": "Validation cancelled"}
+
+
+# Exception handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            error=exc.detail,
+            request_id=str(uuid.uuid4())
+        ).dict()
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    logger.exception("Unhandled exception")
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            error="Internal server error",
+            detail=str(exc),
+            request_id=str(uuid.uuid4())
+        ).dict()
+    )

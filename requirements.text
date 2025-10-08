@@ -1,0 +1,62 @@
+# requirements.txt
+# Generated from Poetry for compatibility
+# To update: poetry export -f requirements.txt --output requirements.txt --without-hashes
+
+# Core framework
+pydantic==2.5.3
+pydantic-core==2.14.6
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Data processing
+pandas==2.1.4
+numpy==1.26.2
+
+# Bioinformatics
+biopython==1.81
+
+# API framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0.post1
+starlette==0.27.0
+anyio==4.1.0
+sniffio==1.3.0
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+greenlet==3.0.1
+
+# Async HTTP
+aiohttp==3.9.1
+aiosignal==1.3.1
+frozenlist==1.4.0
+multidict==6.0.4
+yarl==1.9.4
+async-timeout==4.0.3
+
+# MLOps
+mlflow==2.8.1
+dvc[s3]==3.30.3
+boto3==1.34.10
+s3fs==2023.12.0
+
+# Workflow orchestration
+prefect==2.14.11
+
+# Configuration
+pyyaml==6.0.1
+
+# Monitoring
+prometheus-client==0.19.0
+
+# HTTP client
+requests==2.31.0
+urllib3==2.1.0
+certifi==2023.11.17
+charset-normalizer==3.3.2
+idna==3.6
+
+# Additional utilities
+click==8.1.7
+typing-extensions==4.9.0

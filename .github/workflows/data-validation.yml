@@ -1,0 +1,139 @@
+# .github/workflows/data-validation.yml
+name: Data Validation Pipeline
+
+on:
+  push:
+    paths:
+      - 'data/**'
+      - 'config/validation_rules.yml'
+      - 'config/policy_config.yml'
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      dataset_path:
+        description: 'Path to dataset to validate'
+        required: true
+        default: 'data/examples/sample_guides.csv'
+
+jobs:
+  validate-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.7.0
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+      
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+      
+      - name: Install dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction
+      
+      - name: Setup DVC
+        run: |
+          poetry run dvc remote modify storage --local access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          poetry run dvc remote modify storage --local secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          poetry run dvc pull
+      
+      - name: Validate datasets
+        env:
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: |
+          poetry run python scripts/validation/validate_datasets.py \
+            --input-dir data/raw \
+            --output-dir data/validation_results \
+            --report-format json,html
+      
+      - name: Generate validation report
+        run: |
+          poetry run python scripts/validation/generate_report.py \
+            --results-dir data/validation_results \
+            --output validation_summary.md
+      
+      - name: Upload validation results
+        uses: actions/upload-artifact@v3
+        with:
+          name: validation-results
+          path: |
+            data/validation_results/
+            validation_summary.md
+      
+      - name: Check validation status
+        run: |
+          # Parse results and fail if critical issues found
+          poetry run python scripts/validation/check_status.py \
+            --results-dir data/validation_results \
+            --fail-on-error
+      
+      - name: Commit validated data
+        if: success()
+        run: |
+          poetry run dvc add data/validated
+          git add data/validated.dvc
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git commit -m "Auto-validate data [skip ci]" || echo "No changes to commit"
+          git push
+      
+      - name: Post validation summary
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('validation_summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+  data-quality-metrics:
+    needs: validate-data
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Download validation results
+        uses: actions/download-artifact@v3
+        with:
+          name: validation-results
+      
+      - name: Calculate quality metrics
+        run: |
+          poetry run python scripts/metrics/calculate_quality_metrics.py \
+            --results-dir data/validation_results \
+            --output metrics.json
+      
+      - name: Push metrics to MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: |
+          poetry run python scripts/metrics/push_to_mlflow.py \
+            --metrics-file metrics.json \
+            --experiment-name data-quality-pipeline

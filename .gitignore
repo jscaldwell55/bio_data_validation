@@ -1,0 +1,417 @@
+# .gitignore for Bio-Data Validation System
+
+# =============================================================================
+# Python
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+junit.xml
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Poetry
+# IMPORTANT: Do NOT ignore poetry.lock - we need it!
+# poetry.lock should be committed to ensure reproducible builds
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.env.local
+.env.*.local
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# =============================================================================
+# IDEs and Editors
+# =============================================================================
+
+# VSCode
+.vscode/
+*.code-workspace
+.history/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# =============================================================================
+# Operating Systems
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# =============================================================================
+# Project Specific
+# =============================================================================
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Data directories (keep structure, ignore contents)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/validation_results/*
+!data/validation_results/.gitkeep
+data/examples/*.csv
+data/examples/*.fasta
+data/examples/*.fastq
+data/examples/*.json
+# Allow example templates
+!data/examples/template_*
+!data/examples/sample_guides.csv
+
+# Human feedback data (may contain sensitive info)
+data/human_feedback/*
+!data/human_feedback/.gitkeep
+
+# Temporary test data
+data/test_*/
+data/tmp_*/
+data/*_test/
+
+# Model artifacts
+models/trained/*
+!models/trained/.gitkeep
+models/artifacts/*
+!models/artifacts/.gitkeep
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+*.pb
+*.ckpt
+*.pth
+*.pt
+
+# DVC (Data Version Control)
+# Keep .dvc files but ignore actual data
+.dvc/cache
+.dvc/tmp
+.dvc/plots
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Configuration (contains secrets)
+.env
+.env.local
+.env.production
+.env.staging
+config/secrets.yml
+config/*.secret.yml
+config/local_*.yml
+
+# Kubernetes secrets
+infrastructure/k8s/secrets/
+
+# Terraform
+infrastructure/terraform/.terraform/
+infrastructure/terraform/*.tfstate
+infrastructure/terraform/*.tfstate.*
+infrastructure/terraform/*.tfvars
+infrastructure/terraform/terraform.rc
+infrastructure/terraform/.terraformrc
+
+# Docker
+infrastructure/docker/.dockerignore
+
+# Reports and outputs
+validation_report.md
+validation_summary.md
+*.report.json
+*_report.html
+metrics.json
+deployment.env
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# API keys and tokens
+*_token.txt
+*_key.txt
+api_keys.txt
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Large binary files (use DVC for these)
+*.bam
+*.sam
+*.vcf.gz
+*.bed.gz
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Profiling data
+*.prof
+*.lprof
+
+# Coverage reports (HTML version)
+htmlcov/
+
+# Benchmark results
+benchmarks/results/
+
+# System test outputs
+tests/system/output/
+tests/e2e/output/
+
+# Pre-commit hooks cache
+.pre-commit-cache/
+
+# =============================================================================
+# Keep These Files (Explicit Exceptions)
+# =============================================================================
+
+# Keep empty directories with .gitkeep
+!**/.gitkeep
+
+# Keep example configuration templates
+!config/validation_rules.example.yml
+!config/policy_config.example.yml
+
+# Keep documentation
+!docs/**/*.md
+!docs/**/*.rst
+
+# Keep README files
+!**/README.md
+
+# Keep CI/CD configuration
+!.github/**/*
+
+# Keep Docker configuration
+!infrastructure/docker/Dockerfile
+!infrastructure/docker/docker-compose*.yml
+
+# Keep Kubernetes manifests
+!infrastructure/k8s/**/*.yaml
+!infrastructure/k8s/**/*.yml
+
+# Keep scripts
+!scripts/**/*.py
+!scripts/**/*.sh
+
+# Keep Makefile
+!Makefile
+
+# Keep poetry files
+!pyproject.toml
+# IMPORTANT: poetry.lock should NOT be ignored - remove it from gitignore if present
+
+# Keep requirements files
+!requirements*.txt
