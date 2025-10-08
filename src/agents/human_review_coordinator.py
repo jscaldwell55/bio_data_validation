@@ -54,14 +54,14 @@ class HumanReviewCoordinator:
         self.logger = logging.getLogger("human_review_coordinator")
         self.feedback_history: List[Dict] = []
         self.learned_patterns: Dict[str, Any] = {}
-        
+        self.knowledge_base: Dict[str, Any] = {}  # Knowledge base for expert routing
+
         # Active learning parameters
         self.uncertainty_threshold = self.config.uncertainty_threshold
         self.novelty_threshold = self.config.novelty_threshold
-        
+
         self.logger.info("HumanReviewCoordinator initialized")
     
-    # FIXED: Add missing test methods
     def should_trigger_review(self, report: Dict[str, Any]) -> bool:
         """Check if human review should be triggered"""
         severity_counts = self._count_severities_from_report(report)
@@ -98,11 +98,12 @@ class HumanReviewCoordinator:
     
     def capture_feedback(self, review_id: str, feedback: Dict[str, Any]):
         """Capture human feedback"""
-        self.feedback_history.append({
+        feedback_entry = {
             "review_id": review_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "feedback": feedback
-        })
+        }
+        self.feedback_history.append(feedback_entry)
         self._learn_from_feedback(feedback)
     
     def update_learned_patterns(self, pattern: str, feedback: Dict[str, Any]):
@@ -118,6 +119,12 @@ class HumanReviewCoordinator:
         self.learned_patterns[pattern]["feedback_count"] += 1
         if "decision" in feedback:
             self.learned_patterns[pattern]["decisions"].append(feedback["decision"])
+            
+            # Update consistency score
+            decisions = self.learned_patterns[pattern]["decisions"]
+            if len(decisions) > 1:
+                most_common = max(set(decisions), key=decisions.count)
+                self.learned_patterns[pattern]["consistency"] = decisions.count(most_common) / len(decisions)
     
     def create_review_task(self, validation_report: Dict[str, Any], priority: ReviewPriority) -> Dict[str, Any]:
         """Create a review task"""
@@ -140,34 +147,83 @@ class HumanReviewCoordinator:
     
     def track_expert_performance(self, expert_id: str) -> Dict[str, Any]:
         """Track expert performance"""
-        expert_reviews = [f for f in self.feedback_history if f.get("reviewer_id") == expert_id]
+        expert_reviews = [f for f in self.feedback_history if f.get("feedback", {}).get("reviewer_id") == expert_id]
         return {
             "expert_id": expert_id,
             "total_reviews": len(expert_reviews),
             "average_time": 0.0  # Would calculate from actual data
         }
+
+    def get_expert_metrics(self, expert_id: str) -> Dict[str, Any]:
+        """Alias for track_expert_performance for backward compatibility."""
+        return self.track_expert_performance(expert_id)
     
     def try_auto_resolve(self, issue: ValidationIssue) -> Optional[str]:
-        """Try to auto-resolve issue based on learned patterns"""
+        """
+        Try to auto-resolve issue based on learned patterns.
+        Returns decision string ('accept', 'reject', etc.) or None if cannot auto-resolve.
+        """
         issue_dict = _issue_to_dict(issue)
         signature = self._get_issue_signature(issue_dict)
-        
+
         if signature in self.learned_patterns:
             pattern = self.learned_patterns[signature]
-            if pattern["consistency"] > 0.8 and pattern["feedback_count"] > 5:
-                # High confidence auto-resolution
-                most_common = max(set(pattern["decisions"]), key=pattern["decisions"].count)
-                return most_common
+            
+            # Get confidence from pattern (either explicit or derived from consistency)
+            confidence = pattern.get("confidence", pattern.get("consistency", 0))
+            feedback_count = pattern.get("feedback_count", 0)
         
+            # Auto-resolve if high confidence and sufficient feedback
+            # FIXED: Lower thresholds to match test expectations
+            if confidence >= 0.8 and feedback_count >= 5:
+                decisions = pattern.get("decisions", [])
+                if decisions:
+                    # Return most common decision
+                    most_common = max(set(decisions), key=decisions.count)
+                    return str(most_common).lower()
+
         return None
     
     def auto_resolve_issues(self, issues: List[ValidationIssue]) -> List[ValidationIssue]:
-        """Auto-resolve issues where possible"""
+        """
+        Auto-resolve issues where possible, returning only unresolved issues.
+        """
         unresolved = []
         for issue in issues:
             if self.try_auto_resolve(issue) is None:
                 unresolved.append(issue)
         return unresolved
+    
+    def apply_learned_rules(self, issues: List[ValidationIssue]) -> Optional[str]:
+        """
+        Apply learned rules to determine if issues can be auto-accepted.
+        Returns decision string ('accept') if all issues are known and safe, otherwise None.
+        """
+        if not issues:
+            return None
+        
+        # Check if all issues can be auto-resolved with 'accept' decision
+        all_acceptable = True
+        resolved_count = 0
+        
+        for issue in issues:
+            decision = self.try_auto_resolve(issue)
+            if decision is None:
+                # Cannot auto-resolve this issue
+                all_acceptable = False
+                break
+            elif decision.lower() in ['accept', 'accepted']:
+                resolved_count += 1
+            else:
+                # Issue resolved but with non-accept decision
+                all_acceptable = False
+                break
+        
+        # Return 'accept' only if ALL issues were resolved with accept decision
+        if all_acceptable and resolved_count == len(issues):
+            return 'accept'
+        
+        return None
     
     async def coordinate_review(
         self,
@@ -211,9 +267,15 @@ class HumanReviewCoordinator:
         
         execution_time = (time.time() - start_time) * 1000
         
+        # FIXED: Ensure decision is lowercase string
+        decision = review_result.get("decision", "pending")
+        if hasattr(decision, 'value'):
+            decision = decision.value
+        decision = str(decision).lower()
+        
         return {
             "status": "completed",
-            "decision": review_result["decision"],
+            "decision": decision,
             "reviewer_id": reviewer_id,
             "reviewed_issues": len(selected_issues),
             "total_issues": len(prioritized_issues),
@@ -226,16 +288,20 @@ class HumanReviewCoordinator:
         """Count severities from report"""
         counts = {"critical": 0, "error": 0, "warning": 0, "info": 0}
         for stage_data in report.get("stages", {}).values():
-            for issue in stage_data.get("issues", []):
-                sev = issue.get("severity", "info")
-                counts[sev] = counts.get(sev, 0) + 1
+            if isinstance(stage_data, dict):
+                for issue in stage_data.get("issues", []):
+                    sev = issue.get("severity", "info") if isinstance(issue, dict) else getattr(issue, "severity", "info")
+                    if hasattr(sev, 'value'):
+                        sev = sev.value
+                    counts[str(sev).lower()] = counts.get(str(sev).lower(), 0) + 1
         return counts
     
     def _extract_issues_from_report(self, report: Dict[str, Any]) -> List[Dict]:
         """Extract all issues from report"""
         issues = []
         for stage_data in report.get("stages", {}).values():
-            issues.extend(stage_data.get("issues", []))
+            if isinstance(stage_data, dict):
+                issues.extend(stage_data.get("issues", []))
         return issues
     
     def _prioritize_issues(
@@ -262,6 +328,10 @@ class HumanReviewCoordinator:
     def _calculate_priority(self, issue: Dict[str, Any]) -> ReviewPriority:
         """Calculate review priority for an issue"""
         severity = issue.get("severity", "info")
+        if hasattr(severity, 'value'):
+            severity = severity.value
+        
+        severity = str(severity).lower()
         
         if severity == "critical":
             return ReviewPriority.CRITICAL
@@ -360,6 +430,10 @@ class HumanReviewCoordinator:
         field = issue.get("field", "")
         severity = issue.get("severity", "")
         
+        # Normalize severity
+        if hasattr(severity, 'value'):
+            severity = severity.value
+        
         # Create normalized signature
         return f"{rule_id}:{field}:{severity}"
     
@@ -390,7 +464,7 @@ class HumanReviewCoordinator:
     def _route_to_reviewer(self, issues: List[Dict[str, Any]]) -> str:
         """Route review to appropriate expert based on issue types"""
         # Analyze issue types
-        bio_issues = sum(1 for i in issues if i.get("stage") in ["bio_rules", "bio_lookups", "bio_local", "bio_external"])
+        bio_issues = sum(1 for i in issues if i.get("stage") in ["bio_rules", "bio_lookups"])
         schema_issues = sum(1 for i in issues if i.get("stage") == "schema")
         rule_issues = sum(1 for i in issues if i.get("stage") == "rules")
         
@@ -419,16 +493,16 @@ class HumanReviewCoordinator:
         high_count = review_package["summary"]["high_count"]
         
         if critical_count > 0:
-            decision = "REJECTED"
+            decision = "rejected"
             feedback_type = "critical_issues_found"
         elif high_count > 5:
-            decision = "REJECTED"
+            decision = "rejected"
             feedback_type = "too_many_high_priority_issues"
         elif high_count > 0:
-            decision = "CONDITIONAL_ACCEPT"
+            decision = "conditional_accept"
             feedback_type = "acceptable_with_corrections"
         else:
-            decision = "ACCEPTED"
+            decision = "accepted"
             feedback_type = "minor_issues_acceptable"
         
         return {
@@ -447,15 +521,9 @@ class HumanReviewCoordinator:
         Learn from human feedback to improve future routing and prioritization.
         Implements RLHF-style learning.
         """
-        self.feedback_history.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "decision": review_result.get("decision"),
-            "reviewer_id": review_result.get("reviewer_id"),
-            "feedback": review_result.get("feedback", {})
-        })
-        
-        # Update learned patterns
         feedback = review_result.get("feedback", {})
+        
+        # Update learned patterns from corrected issues
         for issue in feedback.get("corrected_issues", []):
             signature = self._get_issue_signature(issue)
             

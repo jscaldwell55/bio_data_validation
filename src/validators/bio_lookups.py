@@ -13,6 +13,78 @@ from src.utils.batch_processor import BatchProcessor
 logger = logging.getLogger(__name__)
 
 
+class NCBIClient:
+    """Client for NCBI API interactions"""
+
+    def __init__(self, api_key: Optional[str] = None, rate_limit: float = 0.34):
+        self.api_key = api_key
+        self.rate_limit = rate_limit
+        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+    async def get_gene_info(
+        self,
+        gene_symbol: str,
+        organism: str = 'human'
+    ) -> Optional[Dict[str, Any]]:
+        """Look up gene information from NCBI Gene database"""
+        params = {
+            "db": "gene",
+            "term": f"{gene_symbol}[Gene Name] AND {organism}[Organism]",
+            "retmode": "json"
+        }
+
+        if self.api_key:
+            params["api_key"] = self.api_key
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.base_url}/esearch.fcgi",
+                    params=params
+                ) as response:
+                    data = await response.json()
+                    count = int(data['esearchresult']['count'])
+
+                    if count > 0:
+                        return {
+                            'gene_id': data['esearchresult']['idlist'][0] if data['esearchresult']['idlist'] else None,
+                            'symbol': gene_symbol,
+                            'organism': organism,
+                            'count': count
+                        }
+                    return None
+        except Exception as e:
+            logger.error(f"Error fetching gene info for {gene_symbol}: {str(e)}")
+            return None
+
+
+class EnsemblClient:
+    """Client for Ensembl API interactions"""
+
+    def __init__(self, batch_size: int = 50):
+        self.batch_size = batch_size
+        self.base_url = "https://rest.ensembl.org"
+
+    async def get_gene_info(
+        self,
+        gene_symbol: str,
+        species: str = 'homo_sapiens'
+    ) -> Optional[Dict[str, Any]]:
+        """Look up gene information from Ensembl"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.base_url}/lookup/symbol/{species}/{gene_symbol}"
+                headers = {"Content-Type": "application/json"}
+
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return None
+        except Exception as e:
+            logger.error(f"Error fetching gene info from Ensembl for {gene_symbol}: {str(e)}")
+            return None
+
+
 # FIXED: Added class alias for backward compatibility
 class BioLookupsValidator:
     """

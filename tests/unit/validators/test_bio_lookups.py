@@ -10,14 +10,97 @@ from src.validators.bio_lookups import BioLookupsValidator
 from src.schemas.base_schemas import ValidationResult, ValidationSeverity, ValidationIssue
 
 
+# Module-level fixtures available to all test classes
+@pytest.fixture
+def mock_ncbi_client():
+    """Mock NCBI client"""
+    with patch('src.validators.bio_lookups.NCBIClient') as MockClient:
+        mock = MockClient.return_value
+        mock.get_gene_info = AsyncMock(return_value={
+            'gene_id': '672',
+            'symbol': 'BRCA1',
+            'description': 'BRCA1 DNA repair associated',
+            'organism': 'Homo sapiens'
+        })
+        yield mock
+
+
+@pytest.fixture
+def mock_ensembl_client():
+    """Mock Ensembl client"""
+    with patch('src.validators.bio_lookups.EnsemblClient') as MockClient:
+        mock = MockClient.return_value
+        mock.get_gene_info = AsyncMock(return_value={
+            'id': 'ENSG00000012048',
+            'display_name': 'BRCA1',
+            'biotype': 'protein_coding'
+        })
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def mock_bio_api(mocker):
+    """Auto-mock all external API calls"""
+    async def mock_validate_gene_batch(self, batch):
+        results = []
+        for item in batch:
+            gene = item.get('target_gene', '')
+            valid = gene in ['BRCA1', 'TP53', 'EGFR', 'KRAS']
+            results.append({
+                'gene': gene,
+                'organism': item.get('organism', 'human'),
+                'valid': valid,
+                'count': 1 if valid else 0,
+                'ids': ['123'] if valid else []
+            })
+        return results
+
+    mocker.patch(
+        'src.validators.bio_lookups.BioLookupsValidator._validate_gene_batch',
+        mock_validate_gene_batch
+    )
+
+
+@pytest.fixture(autouse=True)
+def mock_bio_lookups_api_calls(mocker):
+    """Auto-mock all external API calls for bio lookups tests"""
+    async def mock_validate_gene_batch(batch):
+        results = []
+        for item in batch:
+            gene = item.get('target_gene', '')
+            is_valid = gene in ['BRCA1', 'TP53', 'EGFR', 'KRAS']
+            results.append({
+                'gene': gene,
+                'organism': item.get('organism', 'human'),
+                'valid': is_valid,
+                'count': 1 if is_valid else 0,
+                'ids': ['123'] if is_valid else []
+            })
+        return results
+    
+    mocker.patch(
+        'src.validators.bio_lookups.BioLookupsValidator._validate_gene_batch',
+        side_effect=mock_validate_gene_batch
+    )
+    
+    async def mock_validate_protein_batch(batch):
+        return [{'id': pid, 'valid': 'NP_' in pid} for pid in batch]
+    
+    mocker.patch(
+        'src.validators.bio_lookups.BioLookupsValidator._validate_protein_batch',
+        side_effect=mock_validate_protein_batch
+    )
+
+
+
 class TestBioLookupsValidator:
     """Test suite for BioLookupsValidator"""
-    
+
     @pytest.fixture
     def validator(self):
         """Create BioLookupsValidator instance"""
         return BioLookupsValidator()
-    
+
     @pytest.fixture
     def valid_gene_data(self):
         """Dataset with valid gene symbols"""
@@ -26,31 +109,6 @@ class TestBioLookupsValidator:
             'target_gene': ['BRCA1', 'TP53', 'EGFR'],
             'organism': ['human', 'human', 'human']
         })
-    
-    @pytest.fixture
-    def mock_ncbi_client(self):
-        """Mock NCBI client"""
-        with patch('src.validators.bio_lookups.NCBIClient') as MockClient:
-            mock = MockClient.return_value
-            mock.get_gene_info = AsyncMock(return_value={
-                'gene_id': '672',
-                'symbol': 'BRCA1',
-                'description': 'BRCA1 DNA repair associated',
-                'organism': 'Homo sapiens'
-            })
-            yield mock
-    
-    @pytest.fixture
-    def mock_ensembl_client(self):
-        """Mock Ensembl client"""
-        with patch('src.validators.bio_lookups.EnsemblClient') as MockClient:
-            mock = MockClient.return_value
-            mock.get_gene_info = AsyncMock(return_value={
-                'id': 'ENSG00000012048',
-                'display_name': 'BRCA1',
-                'biotype': 'protein_coding'
-            })
-            yield mock
     
     # ===== NCBI GENE VALIDATION =====
     

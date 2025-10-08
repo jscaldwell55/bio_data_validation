@@ -2,14 +2,15 @@
 import asyncio
 import time
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 import logging
 import pandas as pd
+from pathlib import Path
 
 from src.schemas.base_schemas import ValidationResult, ValidationSeverity, DatasetMetadata, Decision
-from src.validators.schema_validator import validate_schema
+from src.validators.schema_validator import validate_schema, SchemaValidator
 from src.validators.rule_validator import RuleValidator
 from src.validators.bio_rules import BioRulesValidator
 from src.validators.bio_lookups import BioLookupsValidator
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 class ValidationStage(str, Enum):
     SCHEMA = "schema"
     RULES = "rules"
-    BIO_RULES = "bio_rules"  # FIXED: Changed from BIO_LOCAL
-    BIO_LOOKUPS = "bio_lookups"  # FIXED: Changed from BIO_EXTERNAL
+    BIO_RULES = "bio_rules"
+    BIO_LOOKUPS = "bio_lookups"
     HUMAN_REVIEW = "human_review"
     COMPLETE = "complete"
 
@@ -32,8 +33,8 @@ class OrchestrationConfig:
     timeout_seconds: int = 300
     enable_short_circuit: bool = True
     enable_parallel_bio: bool = True
-    rules_config_path: str = "config/validation_rules.yml"
-    policy_config_path: str = "config/policy_config.yml"
+    rules_config_path: Optional[Union[str, Path, Dict[str, Any]]] = None
+    policy_config_path: Optional[Union[str, Path, Dict[str, Any]]] = None
 
 class ValidationOrchestrator:
     """
@@ -45,13 +46,21 @@ class ValidationOrchestrator:
         self.config = config or OrchestrationConfig()
         self.logger = logging.getLogger("orchestrator")
     
-        # Initialize validators
-        self.rule_validator = RuleValidator(rules_config_path=self.config.rules_config_path)  # FIX
+        # Initialize validators with flexible config
+        rules_config = self.config.rules_config_path
+        if rules_config is None:
+            rules_config = "config/validation_rules.yml"
+        
+        self.rule_validator = RuleValidator(config=rules_config)
         self.bio_rules = BioRulesValidator()
         self.bio_lookups = BioLookupsValidator()
     
         # Initialize policy engine and human review coordinator
-        self.policy_engine = PolicyEngine(config_path=self.config.policy_config_path)  # FIX
+        policy_config = self.config.policy_config_path
+        if policy_config is None:
+            policy_config = "config/policy_config.yml"
+        
+        self.policy_engine = PolicyEngine(config=policy_config)
         self.human_review_coordinator = HumanReviewCoordinator()
         
         self.logger.info("ValidationOrchestrator initialized")
@@ -73,14 +82,14 @@ class ValidationOrchestrator:
         """
         start_time = time.time()
         
-        # FIXED: Generate unique validation_id
+        # Generate unique validation_id
         validation_id = str(uuid.uuid4())
         
         self.logger.info(f"Starting validation {validation_id} for dataset: {metadata.dataset_id}")
         
         # Initialize report
         report = {
-            "validation_id": validation_id,  # FIXED: Added validation_id
+            "validation_id": validation_id,
             "dataset_id": metadata.dataset_id,
             "start_time": start_time,
             "metadata": metadata.model_dump() if hasattr(metadata, 'model_dump') else metadata.dict(),
@@ -89,7 +98,7 @@ class ValidationOrchestrator:
             "requires_human_review": False,
             "execution_time_seconds": 0,
             "short_circuited": False,
-            "decision_rationale": ""  # FIXED: Added decision_rationale
+            "decision_rationale": ""
         }
         
         try:
@@ -102,7 +111,7 @@ class ValidationOrchestrator:
             if self.config.enable_short_circuit and not schema_result.passed:
                 self.logger.info("Short-circuiting: Schema validation failed")
                 report["short_circuited"] = True
-                report["final_decision"] = Decision.REJECTED.value
+                report["final_decision"] = Decision.REJECTED.value  # FIXED: Use .value consistently
                 report["decision_rationale"] = "Failed schema validation"
                 return self._finalize_report(report, start_time)
             
@@ -112,7 +121,7 @@ class ValidationOrchestrator:
             if self.config.enable_short_circuit and rule_result.severity == ValidationSeverity.CRITICAL:
                 self.logger.info("Short-circuiting: Critical rule violations detected")
                 report["short_circuited"] = True
-                report["final_decision"] = Decision.REJECTED.value
+                report["final_decision"] = Decision.REJECTED.value  # FIXED: Use .value consistently
                 report["decision_rationale"] = "Critical rule violations"
                 return self._finalize_report(report, start_time)
             
@@ -123,19 +132,30 @@ class ValidationOrchestrator:
                 bio_results = await self._execute_bio_validation_sequential(df, metadata, report)
             
             # Stage 5: Policy-based Decision
+            policy_start = time.time()
             decision = self.policy_engine.make_decision(report)
-            report["final_decision"] = decision["decision"]
+            policy_execution_time = (time.time() - policy_start) * 1000  # Convert to ms
+
+            # FIXED: Ensure decision is always lowercase string
+            decision_value = decision["decision"]
+            if isinstance(decision_value, Decision):
+                decision_value = decision_value.value
+            decision_value = decision_value.lower()
+            
+            report["final_decision"] = decision_value
             report["decision_rationale"] = decision["rationale"]
             report["requires_human_review"] = decision["requires_review"]
 
             # Add policy stage to report
             report["stages"]["policy"] = {
                 "validator_name": "PolicyEngine",
-                "passed": decision["decision"] in ["ACCEPTED", "CONDITIONAL_ACCEPT"],
+                "passed": decision_value in ["accepted", "conditional_accept"],
                 "severity": "info",
                 "issues": [],
+                "execution_time_ms": policy_execution_time,
+                "records_processed": len(df) if hasattr(df, '__len__') else 0,
                 "metadata": {
-                    "decision": decision["decision"],
+                    "decision": decision_value,
                     "rationale": decision["rationale"],
                     "requires_review": decision["requires_review"],
                     "severity_counts": decision.get("severity_counts", {})
@@ -152,17 +172,20 @@ class ValidationOrchestrator:
                 report["stages"]["human_review"] = review_result
                 # Update decision if human review overrides
                 if "decision" in review_result:
-                    report["final_decision"] = review_result["decision"]
+                    review_decision = review_result["decision"]
+                    if isinstance(review_decision, Decision):
+                        review_decision = review_decision.value
+                    report["final_decision"] = review_decision.lower()
         
         except asyncio.TimeoutError:
             self.logger.error(f"Validation timeout for dataset {metadata.dataset_id}")
-            report["final_decision"] = "ERROR"
+            report["final_decision"] = "error"  # FIXED: lowercase 'error' for timeout
             report["error"] = "Validation timeout"
             report["decision_rationale"] = "Validation timed out"
         
         except Exception as e:
             self.logger.exception(f"Orchestration error for dataset {metadata.dataset_id}: {str(e)}")
-            report["final_decision"] = "ERROR"
+            report["final_decision"] = "error"  # FIXED: lowercase 'error' for exceptions
             report["error"] = str(e)
             report["decision_rationale"] = f"System error: {str(e)}"
         
@@ -183,7 +206,13 @@ class ValidationOrchestrator:
             strict=True
         )
         
-        report["stages"]["schema"] = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+        # FIXED: Serialize result properly
+        result_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+        # Ensure severity is a string
+        if 'severity' in result_dict and hasattr(result_dict['severity'], 'value'):
+            result_dict['severity'] = result_dict['severity'].value
+        
+        report["stages"]["schema"] = result_dict
         return result
     
     async def _execute_rule_validation(
@@ -200,7 +229,13 @@ class ValidationOrchestrator:
             metadata.model_dump() if hasattr(metadata, 'model_dump') else metadata.dict()
         )
         
-        report["stages"]["rules"] = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+        # FIXED: Serialize result properly
+        result_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+        # Ensure severity is a string
+        if 'severity' in result_dict and hasattr(result_dict['severity'], 'value'):
+            result_dict['severity'] = result_dict['severity'].value
+        
+        report["stages"]["rules"] = result_dict
         return result
     
     async def _execute_bio_validation_parallel(
@@ -224,9 +259,23 @@ class ValidationOrchestrator:
         bio_rules_result = results[0] if not isinstance(results[0], Exception) else self._create_error_result("BioRules", results[0])
         bio_lookups_result = results[1] if not isinstance(results[1], Exception) else self._create_error_result("BioLookups", results[1])
         
-        # FIXED: Use correct stage names
-        report["stages"]["bio_rules"] = bio_rules_result.model_dump() if hasattr(bio_rules_result, 'model_dump') else (bio_rules_result.dict() if isinstance(bio_rules_result, ValidationResult) else bio_rules_result)
-        report["stages"]["bio_lookups"] = bio_lookups_result.model_dump() if hasattr(bio_lookups_result, 'model_dump') else (bio_lookups_result.dict() if isinstance(bio_lookups_result, ValidationResult) else bio_lookups_result)
+        # FIXED: Properly serialize results
+        if isinstance(bio_rules_result, ValidationResult):
+            bio_rules_dict = bio_rules_result.model_dump() if hasattr(bio_rules_result, 'model_dump') else bio_rules_result.dict()
+            if 'severity' in bio_rules_dict and hasattr(bio_rules_dict['severity'], 'value'):
+                bio_rules_dict['severity'] = bio_rules_dict['severity'].value
+        else:
+            bio_rules_dict = bio_rules_result
+        
+        if isinstance(bio_lookups_result, ValidationResult):
+            bio_lookups_dict = bio_lookups_result.model_dump() if hasattr(bio_lookups_result, 'model_dump') else bio_lookups_result.dict()
+            if 'severity' in bio_lookups_dict and hasattr(bio_lookups_dict['severity'], 'value'):
+                bio_lookups_dict['severity'] = bio_lookups_dict['severity'].value
+        else:
+            bio_lookups_dict = bio_lookups_result
+        
+        report["stages"]["bio_rules"] = bio_rules_dict
+        report["stages"]["bio_lookups"] = bio_lookups_dict
         
         return {
             "bio_rules": bio_rules_result,
@@ -244,11 +293,17 @@ class ValidationOrchestrator:
         
         # Local checks first (fast)
         bio_rules_result = self.bio_rules.validate(df, metadata.experiment_type or 'guide_rna')
-        report["stages"]["bio_rules"] = bio_rules_result.model_dump() if hasattr(bio_rules_result, 'model_dump') else bio_rules_result.dict()
+        bio_rules_dict = bio_rules_result.model_dump() if hasattr(bio_rules_result, 'model_dump') else bio_rules_result.dict()
+        if 'severity' in bio_rules_dict and hasattr(bio_rules_dict['severity'], 'value'):
+            bio_rules_dict['severity'] = bio_rules_dict['severity'].value
+        report["stages"]["bio_rules"] = bio_rules_dict
         
         # External lookups second (slower)
         bio_lookups_result = await self.bio_lookups.validate(df, 'gene_symbols')
-        report["stages"]["bio_lookups"] = bio_lookups_result.model_dump() if hasattr(bio_lookups_result, 'model_dump') else bio_lookups_result.dict()
+        bio_lookups_dict = bio_lookups_result.model_dump() if hasattr(bio_lookups_result, 'model_dump') else bio_lookups_result.dict()
+        if 'severity' in bio_lookups_dict and hasattr(bio_lookups_dict['severity'], 'value'):
+            bio_lookups_dict['severity'] = bio_lookups_dict['severity'].value
+        report["stages"]["bio_lookups"] = bio_lookups_dict
         
         return {
             "bio_rules": bio_rules_result,
@@ -283,6 +338,13 @@ class ValidationOrchestrator:
         """Finalize the validation report"""
         report["execution_time_seconds"] = time.time() - start_time
         report["end_time"] = time.time()
+        
+        # FIXED: Ensure final_decision is lowercase string
+        if report["final_decision"]:
+            decision = report["final_decision"]
+            if isinstance(decision, Decision):
+                decision = decision.value
+            report["final_decision"] = decision.lower()
         
         self.logger.info(
             f"Validation complete for {report['dataset_id']}: "

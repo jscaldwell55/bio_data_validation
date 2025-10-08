@@ -1,6 +1,6 @@
 # src/validators/schema_validator.py
 import time
-from typing import Any, List, Dict, Union
+from typing import Any, List, Dict, Union, Optional
 from pydantic import BaseModel, Field, validator, ValidationError
 from Bio import SeqIO
 from io import StringIO
@@ -179,7 +179,7 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
     issues = []
     records_processed = 0
     
-    # FIXED: Convert DataFrame to list of dicts
+    # Convert DataFrame to list of dicts
     if isinstance(data, pd.DataFrame):
         # Check for empty DataFrame
         if data.empty:
@@ -189,7 +189,9 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
                 severity=ValidationSeverity.ERROR
             ))
             return issues, 0
-        records = data.to_dict('records')
+        
+        # FIXED: Replace NaN with None for proper Pydantic validation
+        records = data.where(pd.notnull(data), None).to_dict('records')
     elif isinstance(data, dict):
         records = [data]
     else:
@@ -204,9 +206,46 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
         ))
         return issues, 0
     
+    # FIXED: Track required fields from the schema
+    required_fields = set()
+    if hasattr(GuideRNARecord, '__fields__'):
+        # Pydantic v2
+        for field_name, field_info in GuideRNARecord.model_fields.items():
+            if field_info.is_required():
+                required_fields.add(field_name)
+    
     for idx, record in enumerate(records):
         try:
             records_processed += 1
+            
+            # FIXED: Check for missing required fields before Pydantic validation
+            if isinstance(record, dict):
+                missing_fields = required_fields - set(record.keys())
+                if missing_fields:
+                    for field in missing_fields:
+                        issues.append(ValidationIssue(
+                            field=f"record_{idx}.{field}",
+                            message=f"Missing required field: {field}",
+                            severity=ValidationSeverity.ERROR
+                        ))
+                    if strict:
+                        break
+                    continue
+                
+                # FIXED: Check for null values in required fields
+                null_required_fields = [f for f in required_fields if record.get(f) is None]
+                if null_required_fields:
+                    for field in null_required_fields:
+                        issues.append(ValidationIssue(
+                            field=f"record_{idx}.{field}",
+                            message=f"Required field contains null value: {field}",
+                            severity=ValidationSeverity.ERROR
+                        ))
+                    if strict:
+                        break
+                    continue
+            
+            # Validate with Pydantic
             guide = GuideRNARecord(**record)
             
             # Additional domain-specific checks
@@ -228,13 +267,39 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
         
         except ValidationError as e:
             for error in e.errors():
-                issues.append(ValidationIssue(
-                    field=f"record_{idx}.{'.'.join(str(loc) for loc in error['loc'])}",
-                    message=error['msg'],
-                    severity=ValidationSeverity.ERROR
-                ))
+                # Pydantic v2 error format
+                field_path = '.'.join(str(loc) for loc in error['loc'])
+                error_msg = error['msg']
+                error_type = error.get('type', '')
+                
+                # FIXED: Better error message parsing
+                if 'type' in error_type:
+                    # Type validation errors
+                    issues.append(ValidationIssue(
+                        field=f"record_{idx}.{field_path}",
+                        message=f"Type validation failed: {error_msg}",
+                        severity=ValidationSeverity.ERROR
+                    ))
+                else:
+                    # Other validation errors
+                    issues.append(ValidationIssue(
+                        field=f"record_{idx}.{field_path}",
+                        message=error_msg,
+                        severity=ValidationSeverity.ERROR
+                    ))
+                
                 if strict:
                     break
+            if strict:
+                break
+        
+        except Exception as e:
+            # Catch any other exceptions
+            issues.append(ValidationIssue(
+                field=f"record_{idx}",
+                message=f"Validation error: {str(e)}",
+                severity=ValidationSeverity.ERROR
+            ))
             if strict:
                 break
     

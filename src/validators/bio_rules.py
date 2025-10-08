@@ -19,11 +19,11 @@ class BioRulesValidator:
     def __init__(self):
         # PAM sequence patterns for different nucleases
         self.pam_patterns = {
-            'SpCas9': r'[ATCG]GG',      # NGG
-            'SaCas9': r'[ATCG]{2}GR[AG]T',  # NNGRRT
-            'Cas12a': r'TTT[ATCG]',     # TTTV
-            'AsCas12a': r'TTT[ATCG]',   # TTTV
-            'LbCas12a': r'TTT[ATCG]',   # TTTV
+            'SpCas9': r'^[ATCG]GG$',      # NGG
+            'SaCas9': r'^[ATCG]{2}G[AG][AG]T$',  # NNGRRT where R = A or G
+            'Cas12a': r'^TTT[ATCG]$',     # TTTV
+            'AsCas12a': r'^TTT[ATCG]$',   # TTTV
+            'LbCas12a': r'^TTT[ATCG]$',   # TTTV
         }
         
         # Optimal guide RNA lengths by nuclease
@@ -71,7 +71,7 @@ class BioRulesValidator:
         
         execution_time = (time.time() - start_time) * 1000
         
-        # FIXED: Only ERROR and CRITICAL cause validation to fail
+        # Only ERROR and CRITICAL cause validation to fail
         # WARNINGS are informational but don't fail validation
         has_critical_errors = any(
             i.severity in [ValidationSeverity.ERROR, ValidationSeverity.CRITICAL] 
@@ -89,7 +89,7 @@ class BioRulesValidator:
         
         return ValidationResult(
             validator_name="BioRules",
-            passed=not has_critical_errors,  # FIXED: Use correct variable name
+            passed=not has_critical_errors,
             severity=severity,
             issues=issues,
             execution_time_ms=execution_time,
@@ -152,6 +152,17 @@ class BioRulesValidator:
                     metadata={"count": len(critically_short)}
                 ))
 
+            # FIXED: Critically long guides (>30bp) - ERROR (unusable)
+            critically_long = df[df['seq_length'] > 30]
+            if not critically_long.empty:
+                issues.append(ValidationIssue(
+                    field="sequence",
+                    message=f"{len(critically_long)} guides are too long (>30bp) - likely unusable",
+                    severity=ValidationSeverity.ERROR,
+                    rule_id="BIO_001C",
+                    metadata={"count": len(critically_long)}
+                ))
+
             # Suboptimal length guides - WARNING (usable but suboptimal)
             # Either too short (15-18bp) or too long (21-30bp)
             suboptimal = df[((df['seq_length'] >= 15) & (df['seq_length'] < 19)) |
@@ -170,8 +181,9 @@ class BioRulesValidator:
             for nuclease, pattern in self.pam_patterns.items():
                 nuclease_mask = df['nuclease_type'] == nuclease
                 if nuclease_mask.any():
+                    # FIXED: Use proper regex matching with upper case
                     invalid_pam = df[nuclease_mask & 
-                                    ~df['pam_sequence'].str.upper().str.match(pattern)]
+                                    ~df['pam_sequence'].str.upper().str.match(pattern, na=False)]
                     
                     if not invalid_pam.empty:
                         issues.append(ValidationIssue(
@@ -196,9 +208,9 @@ class BioRulesValidator:
                     metadata={"count": len(suboptimal_gc)}
                 ))
         
-        # Check for poly-T stretches (vectorized)
+        # FIXED: Check for poly-T stretches (vectorized) - case insensitive
         if 'sequence' in df.columns:
-            poly_t = df[df['sequence'].str.contains('TTTT', case=False, na=False)]
+            poly_t = df[df['sequence'].str.upper().str.contains('TTTT', na=False)]
             if not poly_t.empty:
                 issues.append(ValidationIssue(
                     field="sequence",
@@ -211,7 +223,7 @@ class BioRulesValidator:
         # Check for homopolymer runs (vectorized)
         if 'sequence' in df.columns:
             homopolymer_pattern = r'([ATCG])\1{4,}'
-            homopolymer = df[df['sequence'].str.contains(homopolymer_pattern, case=False, na=False)]
+            homopolymer = df[df['sequence'].str.upper().str.contains(homopolymer_pattern, na=False)]
             if not homopolymer.empty:
                 issues.append(ValidationIssue(
                     field="sequence",
@@ -236,7 +248,7 @@ class BioRulesValidator:
             # DNA validation
             if dna_mask.any():
                 invalid_dna = df[dna_mask & 
-                                ~df['sequence'].str.upper().str.match(r'^[ATCGN]+$')]
+                                ~df['sequence'].str.upper().str.match(r'^[ATCGN]+$', na=False)]
                 if not invalid_dna.empty:
                     issues.append(ValidationIssue(
                         field="sequence",
@@ -248,7 +260,7 @@ class BioRulesValidator:
             # RNA validation
             if rna_mask.any():
                 invalid_rna = df[rna_mask & 
-                                ~df['sequence'].str.upper().str.match(r'^[AUCGN]+$')]
+                                ~df['sequence'].str.upper().str.match(r'^[AUCGN]+$', na=False)]
                 if not invalid_rna.empty:
                     issues.append(ValidationIssue(
                         field="sequence",
@@ -260,7 +272,7 @@ class BioRulesValidator:
             # Protein validation
             if protein_mask.any():
                 invalid_protein = df[protein_mask & 
-                                    ~df['sequence'].str.upper().str.match(r'^[ACDEFGHIKLMNPQRSTVWY*]+$')]
+                                    ~df['sequence'].str.upper().str.match(r'^[ACDEFGHIKLMNPQRSTVWY*]+$', na=False)]
                 if not invalid_protein.empty:
                     issues.append(ValidationIssue(
                         field="sequence",

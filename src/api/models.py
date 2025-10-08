@@ -83,6 +83,11 @@ class ValidationSubmitResponse(BaseModel):
     submitted_at: datetime = Field(default_factory=datetime.utcnow)
     estimated_completion_seconds: Optional[int] = None
 
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
+
 
 class IssueResponse(BaseModel):
     """Validation issue in response"""
@@ -130,6 +135,11 @@ class ValidationStatusResponse(BaseModel):
     report: Optional[ValidationReportResponse] = None
     error: Optional[str] = None
 
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
+
 
 class HealthResponse(BaseModel):
     """Health check response"""
@@ -137,6 +147,11 @@ class HealthResponse(BaseModel):
     version: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     components: Dict[str, str] = Field(default_factory=dict)
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 
 class MetricsResponse(BaseModel):
@@ -171,3 +186,8 @@ class ErrorResponse(BaseModel):
     detail: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     request_id: Optional[str] = None
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }

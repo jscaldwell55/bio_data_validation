@@ -4,6 +4,180 @@
 
 This document provides a complete summary of all test files generated for the Bio-Data Validation System. The test suite follows modern testing best practices with comprehensive coverage across unit, integration, and end-to-end tests.
 
+---
+
+## ✨ Test Quality Guidelines (UPDATED)
+
+### Quick Start for Writing Tests
+
+**DO:**
+- ✅ Use builders from `tests/builders.py` for creating test data
+- ✅ Compare enum values using `.value` (e.g., `Decision.ACCEPTED.value`)
+- ✅ Use helper assertions from `conftest.py` (e.g., `assert_has_error`)
+- ✅ Parameterize similar tests with `@pytest.mark.parametrize`
+- ✅ Test behavior, not implementation details
+
+**DON'T:**
+- ❌ Manually create test data dicts or DataFrames
+- ❌ Compare strings directly to enum objects
+- ❌ Use exact string matching for error messages
+- ❌ Copy-paste test code - use parameterization instead
+- ❌ Use wrong column names for database models
+
+### Test Data Builders
+
+Always use builders for creating test data:
+
+```python
+# ✅ GOOD - Using builders
+def test_with_builder(report_builder):
+    report = (report_builder()
+              .with_schema_passed()
+              .with_errors(3)
+              .build())
+    decision = policy_engine.make_decision(report)
+    assert decision['decision'] == 'rejected'
+
+# ❌ BAD - Manual test data
+def test_without_builder():
+    report = {
+        'validation_id': 'test-001',
+        'stages': {
+            'schema': {'passed': True, 'issues': []},
+            'rules': {'passed': False, 'issues': [
+                {'field': 'f1', 'message': 'Error', 'severity': 'error'},
+                # ... manually creating each issue
+            ]}
+        }
+    }
+```
+
+### Enum Comparisons
+
+Always use `.value` when comparing enum values:
+
+```python
+# ✅ GOOD - Compare to enum value
+assert decision['decision'] == Decision.ACCEPTED.value
+assert decision['decision'] == 'accepted'
+
+# ❌ BAD - Comparing string to enum object
+assert decision['decision'] == Decision.ACCEPTED  # Fails!
+```
+
+### Assertion Helpers
+
+Use helper functions for clearer, more maintainable assertions:
+
+```python
+# ✅ GOOD - Using assertion helpers
+def test_validation_error(assert_has_error):
+    result = validator.validate(invalid_data)
+    assert_has_error(result, field="sequence", message_contains="required")
+
+# ❌ BAD - Brittle exact string matching
+def test_validation_error():
+    result = validator.validate(invalid_data)
+    assert not result.passed
+    assert result.issues[0].field == "sequence"
+    assert "Missing required field: sequence" in result.issues[0].message
+```
+
+### Database Model Column Names
+
+Use correct column names for database models:
+
+```python
+# ✅ GOOD - Correct column names
+run = ValidationRun(
+    validation_id="test-123",  # Maps to 'id' via __init__
+    dataset_id="dataset-456",
+    format_type="guide_rna",
+    submitted_at=datetime.now(),  # NOT 'start_time'
+    status="pending"
+)
+
+# Query using actual column name
+retrieved = db_session.query(ValidationRun).filter_by(id="test-123").first()
+
+# ❌ BAD - Wrong column names
+run = ValidationRun(
+    id="test-123",
+    dataset_id="dataset-456",
+    start_time=datetime.now(),  # Column doesn't exist
+    record_count=100  # Column doesn't exist
+)
+```
+
+### Parameterized Tests
+
+Reduce duplication with parameterization:
+
+```python
+# ✅ GOOD - Parameterized test
+@pytest.mark.parametrize("error_count,expected_decision", [
+    (0, 'accepted'),
+    (1, 'accepted'),
+    (4, 'accepted'),
+    (5, 'rejected'),
+    (10, 'rejected'),
+])
+def test_error_thresholds(policy_engine, report_builder, error_count, expected_decision):
+    report = report_builder().with_errors(error_count).build()
+    decision = policy_engine.make_decision(report)
+    assert decision['decision'] == expected_decision
+
+# ❌ BAD - Repetitive tests
+def test_0_errors_accepted(policy_engine):
+    # ... test code ...
+    assert decision['decision'] == 'accepted'
+
+def test_1_error_accepted(policy_engine):
+    # ... same test code ...
+    assert decision['decision'] == 'accepted'
+
+def test_5_errors_rejected(policy_engine):
+    # ... same test code ...
+    assert decision['decision'] == 'rejected'
+```
+
+### Available Builders
+
+#### ValidationIssueBuilder
+```python
+issue = (ValidationIssueBuilder()
+         .with_field("sequence")
+         .with_message("Invalid sequence")
+         .error()
+         .build())
+```
+
+#### ValidationReportBuilder
+```python
+report = (ValidationReportBuilder()
+          .with_validation_id("test-001")
+          .with_schema_passed()
+          .with_errors(3, stage_name="rules")
+          .build())
+```
+
+#### DataFrameBuilder
+```python
+df = (DataFrameBuilder()
+      .with_n_guides(10)
+      .with_invalid_pam()
+      .build())
+```
+
+### Available Assertion Helpers
+
+- `assert_has_error(result, field=None, message_contains=None)` - Assert result has matching error
+- `assert_has_warning(result, field=None, message_contains=None)` - Assert result has matching warning
+- `assert_decision_equals(actual, expected)` - Compare decisions handling enum/string differences
+- `count_issues_by_field(result)` - Get dict of issue counts by field name
+
+---
+
 ## 🗂️ Test File Structure
 
 ```

@@ -64,10 +64,10 @@ class RuleValidator(ConfigurableComponent):
                     'check_duplicate_rows': True,
                     'unique_columns': ['guide_id'],
                     'sequence_similarity_threshold': 0.95,
-                    'sequence_columns': []
+                    'sequence_columns': ['sequence']
                 },
                 'bias': {
-                    'target_column': None,
+                    'target_column': 'efficiency_score',
                     'imbalance_threshold': 0.3,
                     'missing_value_threshold': 0.1,
                     'check_distribution_bias': []
@@ -256,25 +256,38 @@ class RuleValidator(ConfigurableComponent):
                         metadata={"duplicate_count": int(dup_count)}
                     ))
         
-        # Check for near-duplicate detection (sequence similarity)
+        # FIXED: Check for near-duplicate sequences (sequence similarity)
         similarity_threshold = duplicate_rules.get('sequence_similarity_threshold', 0.95)
         sequence_columns = duplicate_rules.get('sequence_columns', [])
         
         for col in sequence_columns:
             if col in df.columns:
-                # This is simplified - real implementation would use more sophisticated
-                # sequence comparison (e.g., Levenshtein distance)
+                # Check for exact duplicate sequences
+                dup_seq_mask = df[col].duplicated(keep=False)
+                exact_dup_count = dup_seq_mask.sum()
+                
+                if exact_dup_count > 0:
+                    issues.append(ValidationIssue(
+                        field=col,
+                        message=f"Found {exact_dup_count} duplicate sequences",
+                        severity=ValidationSeverity.WARNING,
+                        rule_id="DUP_003",
+                        metadata={"duplicate_count": int(exact_dup_count)}
+                    ))
+                
+                # For near-duplicate detection (more sophisticated)
+                # This is a simplified version - production would use edit distance
                 near_dups = self._find_near_duplicate_sequences(
                     df[col].tolist(), 
                     similarity_threshold
                 )
-                if near_dups:
+                if near_dups > 0:
                     issues.append(ValidationIssue(
                         field=col,
-                        message=f"Found {len(near_dups)} near-duplicate sequences (>{similarity_threshold*100}% similar)",
+                        message=f"Found {near_dups} near-duplicate sequence pairs (>{similarity_threshold*100}% similar)",
                         severity=ValidationSeverity.WARNING,
-                        rule_id="DUP_003",
-                        metadata={"near_duplicate_pairs": len(near_dups)}
+                        rule_id="DUP_004",
+                        metadata={"near_duplicate_pairs": near_dups}
                     ))
         
         return issues
@@ -285,27 +298,51 @@ class RuleValidator(ConfigurableComponent):
         
         bias_rules = self.rules.get('bias', {})
         
-        # Check class imbalance (vectorized)
+        # FIXED: Check class imbalance for ANY column type
         target_col = bias_rules.get('target_column')
         imbalance_threshold = bias_rules.get('imbalance_threshold', 0.3)
         
         if target_col and target_col in df.columns:
-            value_counts = df[target_col].value_counts(normalize=True)
-            min_proportion = value_counts.min()
+            # For categorical or binary targets
+            if df[target_col].dtype in ['object', 'category', 'bool'] or df[target_col].nunique() <= 10:
+                value_counts = df[target_col].value_counts(normalize=True)
+                min_proportion = value_counts.min()
+                
+                if min_proportion < imbalance_threshold:
+                    issues.append(ValidationIssue(
+                        field=target_col,
+                        message=f"Class imbalance detected: minimum class proportion is {min_proportion:.2%}",
+                        severity=ValidationSeverity.WARNING,
+                        rule_id="BIAS_001",
+                        metadata={
+                            "class_distribution": {str(k): float(v) for k, v in value_counts.items()},
+                            "min_proportion": float(min_proportion)
+                        }
+                    ))
             
-            if min_proportion < imbalance_threshold:
-                issues.append(ValidationIssue(
-                    field=target_col,
-                    message=f"Class imbalance detected: minimum class proportion is {min_proportion:.2%}",
-                    severity=ValidationSeverity.WARNING,
-                    rule_id="BIAS_001",
-                    metadata={
-                        "class_distribution": value_counts.to_dict(),
-                        "min_proportion": float(min_proportion)
-                    }
-                ))
+            # FIXED: Also check continuous data by binning
+            elif pd.api.types.is_numeric_dtype(df[target_col]):
+                # For continuous data, bin into quartiles and check distribution
+                try:
+                    binned = pd.qcut(df[target_col], q=4, labels=False, duplicates='drop')
+                    value_counts = binned.value_counts(normalize=True)
+                    min_proportion = value_counts.min()
+                    
+                    if min_proportion < imbalance_threshold:
+                        issues.append(ValidationIssue(
+                            field=target_col,
+                            message=f"Distribution imbalance detected: minimum quartile proportion is {min_proportion:.2%}",
+                            severity=ValidationSeverity.WARNING,
+                            rule_id="BIAS_001B",
+                            metadata={
+                                "quartile_distribution": {str(k): float(v) for k, v in value_counts.items()},
+                                "min_proportion": float(min_proportion)
+                            }
+                        ))
+                except Exception as e:
+                    logger.debug(f"Could not bin continuous data for {target_col}: {e}")
         
-        # Check for missing value bias (vectorized)
+        # FIXED: Check for missing value bias (vectorized)
         missing_threshold = bias_rules.get('missing_value_threshold', 0.1)
         missing_props = df.isnull().sum() / len(df)
         biased_cols = missing_props[missing_props > missing_threshold]
@@ -313,7 +350,7 @@ class RuleValidator(ConfigurableComponent):
         if not biased_cols.empty:
             for col, prop in biased_cols.items():
                 issues.append(ValidationIssue(
-                    field=col,
+                    field=str(col),
                     message=f"High missing value rate: {prop:.2%}",
                     severity=ValidationSeverity.WARNING,
                     rule_id="BIAS_002",
@@ -322,8 +359,10 @@ class RuleValidator(ConfigurableComponent):
         
         # Check for statistical distribution bias
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        check_bias_cols = bias_rules.get('check_distribution_bias', [])
+        
         for col in numeric_cols:
-            if col in bias_rules.get('check_distribution_bias', []):
+            if col in check_bias_cols:
                 # Check skewness
                 skewness = df[col].skew()
                 if abs(skewness) > 2:
@@ -381,13 +420,34 @@ class RuleValidator(ConfigurableComponent):
         return check_func(actual_type) if check_func else True
     
     @staticmethod
-    def _find_near_duplicate_sequences(sequences: List[str], threshold: float) -> List[tuple]:
-        """Find near-duplicate sequences (simplified implementation)"""
-        # In production, use more sophisticated algorithms like:
-        # - Levenshtein distance
-        # - Smith-Waterman alignment
-        # - MinHash for large-scale detection
+    def _find_near_duplicate_sequences(sequences: List[str], threshold: float) -> int:
+        """
+        Find near-duplicate sequences (simplified implementation)
+        Returns count of near-duplicate pairs found
+        """
+        # FIXED: Simplified implementation that actually works
+        # In production, use Levenshtein distance or similar
+        near_dup_count = 0
         
-        near_dups = []
-        # Placeholder - actual implementation would be more complex
-        return near_dups
+        # Convert to set for faster comparison
+        unique_seqs = list(set(sequences))
+        
+        # For small datasets, do pairwise comparison
+        if len(unique_seqs) < 1000:
+            for i in range(len(unique_seqs)):
+                for j in range(i + 1, len(unique_seqs)):
+                    seq1, seq2 = unique_seqs[i], unique_seqs[j]
+                    
+                    # Skip if lengths are too different
+                    if abs(len(seq1) - len(seq2)) > max(len(seq1), len(seq2)) * (1 - threshold):
+                        continue
+                    
+                    # Simple similarity: count matching characters at same positions
+                    if len(seq1) == len(seq2):
+                        matches = sum(c1 == c2 for c1, c2 in zip(seq1, seq2))
+                        similarity = matches / len(seq1)
+                        
+                        if similarity >= threshold and similarity < 1.0:
+                            near_dup_count += 1
+        
+        return near_dup_count

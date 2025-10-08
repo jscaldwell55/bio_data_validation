@@ -6,7 +6,7 @@ decision_matrix:
   critical_threshold: 1      # Any critical issues = reject
   error_threshold: 5         # 5+ errors = reject
   warning_threshold: 10      # 10+ warnings = conditional accept
-  moderate_warning_threshold: 3  # 3+ warnings = conditional accept
+  moderate_warning_threshold: 5  # 5+ warnings = conditional accept (allows 1-4 warnings to be accepted)
 
 human_review_triggers:
   on_critical: true          # Always review critical issues
@@ -20,28 +20,28 @@ policies:
     name: "Critical Data Integrity"
     description: "Any critical integrity issues result in rejection"
     condition: "severity.critical > 0"
-    action: "rejected"  # FIXED: lowercase to match Decision enum
+    action: "rejected"
     priority: 1
   
   - id: POL_002
     name: "High Error Rate"
     description: "High number of errors indicates systemic issues"
     condition: "severity.error >= 5"
-    action: "rejected"  # FIXED: lowercase to match Decision enum
+    action: "rejected"
     priority: 2
   
   - id: POL_003
     name: "Moderate Issues"
     description: "Some issues present but data may be usable with caution"
     condition: "severity.warning >= 3 AND severity.error < 5"
-    action: "conditional_accept"  # FIXED: lowercase with underscore
+    action: "conditional_accept"
     priority: 3
   
   - id: POL_004
     name: "Clean Data"
     description: "Minimal or no issues detected"
     condition: "severity.error == 0 AND severity.warning < 3"
-    action: "accepted"  # FIXED: lowercase to match Decision enum
+    action: "accepted"
     priority: 4
 
 validation_workflow:

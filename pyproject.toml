@@ -19,6 +19,7 @@ biopython = "^1.81"
 # API framework
 fastapi = "^0.104.0"
 uvicorn = {extras = ["standard"], version = "^0.24.0"}
+httpx = "<0.28.0"  # Pin to version compatible with starlette 0.27.0
 # Database
 sqlalchemy = "^2.0.0"
 alembic = "^1.12.0"

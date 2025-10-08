@@ -1,3 +1,5 @@
+# tests/conftest.py
+
 """
 Pytest configuration and shared fixtures
 This file is automatically loaded by pytest
@@ -250,3 +252,219 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
+
+
+# ===== TEST BUILDERS AND FACTORIES =====
+
+@pytest.fixture
+def issue_builder():
+    """Factory for creating ValidationIssues."""
+    from tests.builders import ValidationIssueBuilder
+    return ValidationIssueBuilder
+
+
+@pytest.fixture
+def report_builder():
+    """Factory for creating validation reports."""
+    from tests.builders import ValidationReportBuilder
+    return ValidationReportBuilder
+
+
+@pytest.fixture
+def df_builder():
+    """Factory for creating test DataFrames."""
+    from tests.builders import DataFrameBuilder
+    return DataFrameBuilder
+
+
+@pytest.fixture
+def result_builder():
+    """Factory for creating ValidationResults."""
+    from tests.builders import ValidationResultBuilder
+    return ValidationResultBuilder
+
+
+# ===== DATABASE FIXTURES =====
+
+@pytest.fixture(scope="function")
+def db_engine():
+    """Create in-memory database for testing."""
+    from sqlalchemy import create_engine
+    from src.utils.database_clients import Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    yield engine
+    Base.metadata.drop_all(engine)
+
+
+@pytest.fixture(scope="function")
+def db_session(db_engine):
+    """Create database session for testing."""
+    from sqlalchemy.orm import sessionmaker
+
+    Session = sessionmaker(bind=db_engine)
+    session = Session()
+    yield session
+    session.close()
+
+
+# ===== POLICY AND CONFIGURATION FIXTURES =====
+
+@pytest.fixture
+def mock_policy_config():
+    """Mock policy configuration for testing."""
+    return {
+        'decision_matrix': {
+            'critical_threshold': 1,
+            'error_threshold': 5,
+            'warning_threshold': 10
+        },
+        'human_review_triggers': {
+            'on_critical': True,
+            'error_count_threshold': 3,
+            'warning_count_threshold': 15
+        }
+    }
+
+
+@pytest.fixture
+def sample_metadata():
+    """Sample dataset metadata."""
+    from src.schemas.base_schemas import DatasetMetadata
+    return DatasetMetadata(
+        dataset_id="test-001",
+        format_type="guide_rna",
+        record_count=10,
+        organism="human"
+    )
+
+
+# ===== ASSERTION HELPERS =====
+
+@pytest.fixture
+def assert_has_error():
+    """
+    Helper to assert validation result has error matching criteria.
+
+    Usage:
+        assert_has_error(result, field="sequence", message_contains="required")
+    """
+    def _assert(result, field=None, message_contains=None, severity=None):
+        from src.schemas.base_schemas import ValidationSeverity
+
+        assert not result.passed, "Expected validation to fail"
+
+        # Filter by severity if specified, otherwise look for errors/critical
+        if severity:
+            target_severities = [severity] if not isinstance(severity, list) else severity
+        else:
+            target_severities = [ValidationSeverity.ERROR, ValidationSeverity.CRITICAL]
+
+        errors = [
+            i for i in result.issues
+            if i.severity in target_severities
+        ]
+        assert errors, f"Expected at least one issue with severity {target_severities}"
+
+        if field:
+            field_errors = [i for i in errors if i.field == field]
+            assert field_errors, f"No error for field '{field}'. Found errors for: {[i.field for i in errors]}"
+            errors = field_errors
+
+        if message_contains:
+            matching_errors = [
+                i for i in errors
+                if message_contains.lower() in i.message.lower()
+            ]
+            assert matching_errors, \
+                f"No error message containing '{message_contains}'. Messages: {[i.message for i in errors]}"
+
+        return True
+
+    return _assert
+
+
+@pytest.fixture
+def assert_has_warning():
+    """
+    Helper to assert validation result has warning matching criteria.
+
+    Usage:
+        assert_has_warning(result, field="gc_content")
+    """
+    def _assert(result, field=None, message_contains=None):
+        from src.schemas.base_schemas import ValidationSeverity
+
+        warnings = [
+            i for i in result.issues
+            if i.severity == ValidationSeverity.WARNING
+        ]
+        assert warnings, "Expected at least one warning"
+
+        if field:
+            field_warnings = [i for i in warnings if i.field == field]
+            assert field_warnings, f"No warning for field '{field}'"
+
+        if message_contains:
+            matching_warnings = [
+                i for i in warnings
+                if message_contains.lower() in i.message.lower()
+            ]
+            assert matching_warnings, f"No warning message containing '{message_contains}'"
+
+        return True
+
+    return _assert
+
+
+@pytest.fixture
+def assert_decision_equals():
+    """
+    Helper to compare decision values handling enum/string differences.
+
+    Usage:
+        assert_decision_equals(report['final_decision'], Decision.ACCEPTED)
+        # or
+        assert_decision_equals(report['final_decision'], 'accepted')
+    """
+    def _assert(actual, expected):
+        from src.schemas.base_schemas import Decision
+
+        # Normalize expected to string value
+        if isinstance(expected, Decision):
+            expected_value = expected.value
+        else:
+            expected_value = expected
+
+        # Normalize actual to string
+        if hasattr(actual, 'value'):
+            actual_value = actual.value
+        else:
+            actual_value = str(actual)
+
+        assert actual_value == expected_value, \
+            f"Expected decision '{expected_value}', got '{actual_value}'"
+
+        return True
+
+    return _assert
+
+
+@pytest.fixture
+def count_issues_by_field():
+    """
+    Helper to count issues by field name.
+
+    Usage:
+        counts = count_issues_by_field(result)
+        assert counts['sequence'] == 2
+    """
+    def _count(result):
+        counts = {}
+        for issue in result.issues:
+            field = issue.field
+            counts[field] = counts.get(field, 0) + 1
+        return counts
+
+    return _count

@@ -16,35 +16,56 @@ class ValidationRun(Base):
     """Validation run record"""
     __tablename__ = "validation_runs"
 
+    # Primary columns
     id = Column(String, primary_key=True)
     dataset_id = Column(String, index=True)
     format_type = Column(String)
+    record_count = Column(Integer, nullable=True)
+    
+    # Timestamp columns
     submitted_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+    
+    # Status and decision columns
     status = Column(String)
     final_decision = Column(String, nullable=True)
     execution_time_seconds = Column(Float, nullable=True)
     requires_human_review = Column(Boolean, default=False)
     short_circuited = Column(Boolean, default=False)
+    
+    # Data columns
     report_json = Column(JSON)
-    dataset_metadata = Column(JSON)
+    dataset_metadata = Column(JSON)  # FIXED: Cannot use 'metadata' (SQLAlchemy reserved word)
 
-    def __init__(self, validation_id=None, **kwargs):
+    def __init__(self, validation_id=None, start_time=None, metadata=None, **kwargs):
         """
-        Allow validation_id to be passed and map to id.
+        Flexible constructor supporting multiple naming conventions.
 
         Args:
-            validation_id: Optional validation ID (maps to id column)
-            **kwargs: Other column values
+            validation_id: Maps to 'id'
+            start_time: Maps to 'submitted_at'
+            metadata: Maps to 'dataset_metadata' (avoiding SQLAlchemy reserved word)
+            **kwargs: Other column values (dataset_id, format_type, etc.)
         """
+        # Map validation_id to id
         if validation_id is not None:
             kwargs['id'] = validation_id
+
+        # Map start_time to submitted_at
+        if start_time is not None:
+            kwargs['submitted_at'] = start_time
+        
+        # Map metadata to dataset_metadata (SQLAlchemy reserves 'metadata')
+        if metadata is not None:
+            kwargs['dataset_metadata'] = metadata
+
         super().__init__(**kwargs)
 
-    # Property for backward compatibility
-    @property
-    def validation_id(self):
-        return self.id
+
+# CRITICAL: Add properties AFTER class definition to avoid SQLAlchemy confusion
+# Properties defined inside the class body are treated as columns by SQLAlchemy
+ValidationRun.validation_id = property(lambda self: self.id)
+ValidationRun.metadata = property(lambda self: self.dataset_metadata)
 
 
 class ValidationIssue(Base):
@@ -59,20 +80,34 @@ class ValidationIssue(Base):
     message = Column(Text)
     severity = Column(String, index=True)
     rule_id = Column(String, nullable=True)
-    issue_metadata = Column(JSON)  # FIXED: Renamed from 'metadata' to 'issue_metadata'
+    issue_metadata = Column(JSON)  # FIXED: Cannot use 'metadata' (SQLAlchemy reserved word)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    def __init__(self, validation_id=None, **kwargs):
+    def __init__(self, validation_id=None, record_id=None, metadata=None, **kwargs):
         """
-        Allow validation_id to be passed and map to validation_run_id.
+        Flexible constructor supporting multiple naming conventions.
 
         Args:
-            validation_id: Optional validation ID (maps to validation_run_id)
+            validation_id: Maps to 'validation_run_id'
+            record_id: Also maps to 'validation_run_id'
+            metadata: Maps to 'issue_metadata'
             **kwargs: Other column values
         """
+        # Map validation_id or record_id to validation_run_id
         if validation_id is not None:
             kwargs['validation_run_id'] = validation_id
+        elif record_id is not None:
+            kwargs['validation_run_id'] = record_id
+        
+        # Map metadata to issue_metadata (SQLAlchemy reserves 'metadata')
+        if metadata is not None:
+            kwargs['issue_metadata'] = metadata
+
         super().__init__(**kwargs)
+
+
+# Add property after class definition
+ValidationIssue.metadata = property(lambda self: self.issue_metadata)
 
 
 class HumanReview(Base):
@@ -88,19 +123,35 @@ class HumanReview(Base):
     reviewed_at = Column(DateTime, nullable=True)
     decision = Column(String, nullable=True)
     feedback = Column(JSON)
-    review_metadata = Column(JSON)  # FIXED: Renamed from 'metadata' to 'review_metadata'
+    review_metadata = Column(JSON)  # FIXED: Cannot use 'metadata' (SQLAlchemy reserved word)
 
-    def __init__(self, validation_id=None, **kwargs):
+    def __init__(self, validation_id=None, reviewer=None, metadata=None, **kwargs):
         """
-        Allow validation_id to be passed and map to validation_run_id.
+        Flexible constructor supporting multiple naming conventions.
 
         Args:
-            validation_id: Optional validation ID (maps to validation_run_id)
+            validation_id: Maps to 'validation_run_id'
+            reviewer: Maps to 'reviewer_id'
+            metadata: Maps to 'review_metadata'
             **kwargs: Other column values
         """
+        # Map validation_id to validation_run_id
         if validation_id is not None:
             kwargs['validation_run_id'] = validation_id
+
+        # Map reviewer to reviewer_id
+        if reviewer is not None:
+            kwargs['reviewer_id'] = reviewer
+        
+        # Map metadata to review_metadata (SQLAlchemy reserves 'metadata')
+        if metadata is not None:
+            kwargs['review_metadata'] = metadata
+
         super().__init__(**kwargs)
+
+
+# Add property after class definition
+HumanReview.metadata = property(lambda self: self.review_metadata)
 
 
 class DatabaseClient:
@@ -128,6 +179,7 @@ class DatabaseClient:
         validation_id: str,
         dataset_id: str,
         format_type: str,
+        record_count: Optional[int] = None,
         metadata: Optional[Dict] = None
     ) -> ValidationRun:
         """Save validation run to database"""
@@ -138,6 +190,7 @@ class DatabaseClient:
                 id=validation_id,
                 dataset_id=dataset_id,
                 format_type=format_type,
+                record_count=record_count,
                 status="pending",
                 dataset_metadata=metadata or {}
             )
@@ -230,6 +283,27 @@ class DatabaseClient:
         finally:
             session.close()
     
+    def get_recent_validations(
+        self,
+        limit: int = 10,
+        dataset_id: Optional[str] = None
+    ) -> List[ValidationRun]:
+        """Get recent validation runs"""
+        session = self.get_session()
+        
+        try:
+            query = session.query(ValidationRun).order_by(
+                ValidationRun.submitted_at.desc()
+            )
+            
+            if dataset_id:
+                query = query.filter_by(dataset_id=dataset_id)
+            
+            return query.limit(limit).all()
+            
+        finally:
+            session.close()
+    
     def create_human_review(
         self,
         validation_id: str,
@@ -253,6 +327,29 @@ class DatabaseClient:
             session.refresh(review)
             return review
             
+        finally:
+            session.close()
+    
+    def update_human_review(
+        self,
+        review_id: str,
+        reviewer_id: str,
+        decision: str,
+        feedback: Dict[str, Any]
+    ):
+        """Update human review with decision"""
+        session = self.get_session()
+        
+        try:
+            review = session.query(HumanReview).filter_by(id=review_id).first()
+            if review:
+                review.reviewer_id = reviewer_id
+                review.reviewed_at = datetime.utcnow()
+                review.status = "completed"
+                review.decision = decision
+                review.feedback = feedback
+                session.commit()
+                
         finally:
             session.close()
     

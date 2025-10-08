@@ -92,6 +92,7 @@ class ConfigurableComponent:
     def __init__(
         self,
         config: Optional[Union[str, Path, Dict[str, Any]]] = None,
+        strict: bool = False,
         **kwargs
     ):
         """
@@ -102,10 +103,12 @@ class ConfigurableComponent:
                 - str/Path: Path to YAML configuration file
                 - dict: Configuration dictionary (for testing)
                 - None: Use default configuration
+            strict: If True, raise YAMLError for malformed YAML instead of ValueError
             **kwargs: Override specific config values
         """
         import logging
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.strict = strict
 
         # Load base configuration
         if config is None:
@@ -117,8 +120,9 @@ class ConfigurableComponent:
         else:
             raise TypeError(f"config must be str, Path, dict, or None, got {type(config)}")
 
-        # Allow kwargs to override specific values
-        self.config.update(kwargs)
+        # Allow kwargs to override specific values (excluding strict)
+        config_kwargs = {k: v for k, v in kwargs.items() if k != 'strict'}
+        self.config.update(config_kwargs)
 
         # Validate configuration
         self._validate_config()
@@ -133,6 +137,8 @@ class ConfigurableComponent:
             return self._get_default_config()
         except yaml.YAMLError as e:
             self.logger.error(f"Invalid YAML in {path}: {e}")
+            if self.strict:
+                raise  # Re-raise the original YAMLError in strict mode
             raise ValueError(f"Failed to parse config file: {e}")
 
     def _get_default_config(self) -> Dict[str, Any]:

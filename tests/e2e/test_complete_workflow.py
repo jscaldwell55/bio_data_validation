@@ -64,7 +64,7 @@ class TestCompleteWorkflow:
         assert 'bio_rules' in report['stages']
         
         # Verify decision
-        assert report['final_decision'] == Decision.ACCEPTED
+        assert report['final_decision'] == Decision.ACCEPTED.value
         assert report['requires_human_review'] is False
         
         # Verify provenance
@@ -99,7 +99,7 @@ class TestCompleteWorkflow:
         report = await orchestrator.validate_dataset(dataset, metadata)
         
         # Verify report
-        assert report['final_decision'] == Decision.REJECTED
+        assert report['final_decision'] == Decision.REJECTED.value
         
         # Verify issues detected across multiple stages
         total_issues = sum(
@@ -145,7 +145,7 @@ class TestCompleteWorkflow:
         report = await orchestrator.validate_dataset(dataset, metadata)
         
         # Should be conditional accept
-        assert report['final_decision'] in [Decision.CONDITIONAL_ACCEPT, Decision.ACCEPTED]
+        assert report['final_decision'] in [Decision.CONDITIONAL_ACCEPT.value, Decision.ACCEPTED]
     
     # ===== FILE-BASED WORKFLOWS =====
     
@@ -173,7 +173,7 @@ gRNA_003,GATTACAGATTACAGATTAC,CGG,EGFR,human,SpCas9"""
         report = await orchestrator.validate_dataset(df, metadata)
         
         # Verify success
-        assert report['final_decision'] == Decision.ACCEPTED
+        assert report['final_decision'] == Decision.ACCEPTED.value
     
     # ===== LARGE DATASET WORKFLOWS =====
     
@@ -272,7 +272,7 @@ gRNA_003,GATTACAGATTACAGATTAC,CGG,EGFR,human,SpCas9"""
         
         # Should short-circuit
         assert report['short_circuited'] is True
-        assert report['final_decision'] == Decision.REJECTED
+        assert report['final_decision'] == Decision.REJECTED.value
         
         # Later stages should be skipped
         if 'bio_lookups' in report['stages']:
@@ -355,7 +355,7 @@ class TestEndToEndScenarios:
         
         report = await orchestrator.validate_dataset(dataset, metadata)
         
-        assert report['final_decision'] in [Decision.ACCEPTED, Decision.CONDITIONAL_ACCEPT]
+        assert report['final_decision'] in [Decision.ACCEPTED.value, Decision.CONDITIONAL_ACCEPT]
     
     @pytest.mark.asyncio
     @pytest.mark.e2e
