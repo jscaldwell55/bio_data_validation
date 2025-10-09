@@ -431,4 +431,5 @@ tests/e2e/output/
 # IMPORTANT: poetry.lock should NOT be ignored - remove it from gitignore if present
 
 # Keep requirements files
-!requirements*.txt
+!requirements*.txt/data/
+/tests/
