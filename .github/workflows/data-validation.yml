@@ -20,8 +20,9 @@ jobs:
   validate-data:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      actions: write          # <-- needed for upload-artifact v4
+      contents: write
+      actions: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,7 +43,7 @@ jobs:
 
       - name: Load cached venv
         id: cached-poetry-dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
@@ -74,12 +75,13 @@ jobs:
             --output validation_summary.md
 
       - name: Upload validation results
-        uses: actions/upload-artifact@v4       # <-- bumped to v4
+        uses: actions/upload-artifact@v4
         with:
           name: validation-results
           path: |
             data/validation_results/
             validation_summary.md
+          retention-days: 90
 
       - name: Check validation status
         run: |
@@ -88,7 +90,7 @@ jobs:
             --fail-on-error
 
       - name: Commit validated data
-        if: success()
+        if: success() && github.event_name != 'pull_request'
         run: |
           poetry run dvc add data/validated
           git add data/validated.dvc
@@ -97,18 +99,25 @@ jobs:
           git commit -m "Auto-validate data [skip ci]" || echo "No changes to commit"
           git push
 
-      - name: Post validation summary (PRs only)
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/github-script@v6
+      - name: Post validation summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+            
+            if (!fs.existsSync('validation_summary.md')) {
+              console.log('validation_summary.md not found');
+              return;
+            }
+            
             const summary = fs.readFileSync('validation_summary.md', 'utf8');
-            github.rest.issues.createComment({
+            
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: summary
+              body: `## 🔬 Data Validation Results\n\n${summary}`
             });
 
   data-quality-metrics:
@@ -116,16 +125,38 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read            # <-- needed for download-artifact v4
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.7.0
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction
+
       - name: Download validation results
-        uses: actions/download-artifact@v4   # <-- bumped to v4
+        uses: actions/download-artifact@v4
         with:
           name: validation-results
-          path: .
 
       - name: Calculate quality metrics
         run: |

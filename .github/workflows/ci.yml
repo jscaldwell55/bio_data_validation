@@ -14,6 +14,9 @@ env:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # For PR comments if using coverage bot
     
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +37,7 @@ jobs:
       
       - name: Load cached venv
         id: cached-poetry-dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4  # Bumped from v3 to v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
@@ -61,14 +64,18 @@ jobs:
             --junitxml=junit.xml \
             -v
       
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4  # Bumped from v3 to v4
         with:
-          file: ./coverage.xml
+          files: ./coverage.xml
           fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}  # Required for v4
 
   security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # Required for uploading SARIF results
     
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +88,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
       
-      - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v2
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3  # Bumped from v2 to v3
         with:
           sarif_file: 'trivy-results.sarif'

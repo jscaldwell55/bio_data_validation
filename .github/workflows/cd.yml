@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-      actions: write       # <-- needed for upload-artifact v4
+      actions: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,10 +62,11 @@ jobs:
           echo "DEPLOYMENT_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> deployment.env
 
       - name: Upload deployment artifact
-        uses: actions/upload-artifact@v4   # <-- bumped to v4
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-info
           path: deployment.env
+          retention-days: 30
 
   deploy-staging:
     needs: build-and-push
@@ -73,16 +74,15 @@ jobs:
     environment: staging
     permissions:
       contents: read
-      actions: read        # <-- needed for download-artifact v4
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Download deployment artifact
-        uses: actions/download-artifact@v4  # <-- bumped to v4
+        uses: actions/download-artifact@v4
         with:
           name: deployment-info
-          path: .                           # ensure deployment.env is in $GITHUB_WORKSPACE
 
       - name: Configure kubectl
         uses: azure/k8s-set-context@v3
@@ -106,6 +106,12 @@ jobs:
           ENDPOINT=$(kubectl get service bio-validation-api-service \
             -n bio-validation-staging \
             -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          
+          if [ -z "$ENDPOINT" ]; then
+            echo "❌ Failed to get staging endpoint"
+            exit 1
+          fi
+          
           curl -f http://${ENDPOINT}/health || exit 1
           echo "✅ Staging deployment successful"
 
@@ -115,17 +121,16 @@ jobs:
     environment: production
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
-      contents: read
-      actions: read        # <-- needed for download-artifact v4
+      contents: write
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Download deployment artifact
-        uses: actions/download-artifact@v4  # <-- bumped to v4
+        uses: actions/download-artifact@v4
         with:
           name: deployment-info
-          path: .
 
       - name: Configure kubectl
         uses: azure/k8s-set-context@v3
@@ -149,15 +154,18 @@ jobs:
           ENDPOINT=$(kubectl get service bio-validation-api-service \
             -n bio-validation-prod \
             -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          
+          if [ -z "$ENDPOINT" ]; then
+            echo "❌ Failed to get production endpoint"
+            exit 1
+          fi
+          
           curl -f http://${ENDPOINT}/health || exit 1
           echo "✅ Production deployment successful"
 
       - name: Create GitHub Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          generate_release_notes: true
           draft: false
           prerelease: false
