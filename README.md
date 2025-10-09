@@ -987,25 +987,82 @@ docker-compose restart prometheus
 
 ```
 bio-data-validation/
-├── src/
-│   ├── agents/                 # Orchestration (2 agents)
-│   ├── validators/             # Validation logic
-│   ├── engine/                 # Policy decisions
-│   ├── schemas/                # Pydantic models
-│   ├── utils/                  # Utilities
-│   ├── monitoring/             # Metrics + logging
-│   └── api/                    # FastAPI routes
-├── config/                     # YAML configs
+├── .pre-commit-config.yaml
+├── Makefile
+├── README.md
+├── docker-compose.yml
+├── poetry.lock
+├── pyproject.toml
+├── requirements-dev.txt
+├── requirements.text
+├── config/
+│   ├── base_config.py
+│   ├── policy_config.yml
+│   └── validation_rules.yml
+├── data/
+│   └── CRISPRGeneDependency.csv
+├── docs/
 ├── infrastructure/
-│   ├── docker/                 # Dockerfile
-│   ├── grafana/               # Grafana dashboards + datasources
-│   ├── prometheus/            # Metrics + alerts
-│   └── k8s/                   # Kubernetes manifests (future)
-├── tests/                      # Comprehensive test suite
-├── validation_output/          # Automatic report exports
-├── logs/                       # JSON structured logs
-├── docker-compose.yml          # Full monitoring stack
-└── pyproject.toml             # Poetry dependencies
+│   ├── docker/
+│   │   └── Dockerfile
+│   ├── grafana/
+│   │   ├── dashboards/
+│   │   │   ├── bio-validation-overview.json
+│   │   │   └── dashboard.yml
+│   │   └── datasources/
+│   │       └── prometheus.yml
+│   └── prometheus/
+│       ├── alerts.yml
+│       └── prometheus.yml
+├── scripts/
+│   ├── examples/
+│   │   ├── __init__.py
+│   │   └── example_usage.py
+│   ├── metrics/
+│   │   ├── __init__.py
+│   │   ├── calculate_quality_metrics.py
+│   │   └── push_to_mlflow.py
+│   ├── setup/
+│   │   └── init_dvc.py
+│   └── validation/
+│       ├── __init__.py
+│       ├── check_status.py
+│       ├── generate_report.py
+│       └── validate_datasets.py
+├── src/
+│   ├── __init__.py
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── human_review_coordinator.py
+│   │   └── orchestrator.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   └── routes.py
+│   ├── engine/
+│   │   ├── __init__.py
+│   │   ├── decision_tables.py
+│   │   └── policy_engine.py
+│   ├── monitoring/
+│   │   ├── __init__.py
+│   │   ├── logging_config.py
+│   │   └── metrics.py
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── base_schemas.py
+│   │   └── biological_schemas.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── batch_processor.py
+│   │   ├── bio_tools.py
+│   │   └── database_clients.py
+│   └── validators/
+│       ├── __init__.py
+│       ├── bio_lookups.py
+│       ├── bio_rules.py
+│       ├── rule_validator.py
+│       └── schema_validator.py
+└── validation_output/
 ```
 
 ---
