@@ -46,6 +46,7 @@ tests/
 **/tests/**
 test_*.py
 *_test.py
+file.md
 
 # Pytest + coverage cruft
 .pytest_cache/
