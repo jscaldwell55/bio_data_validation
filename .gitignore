@@ -46,7 +46,7 @@ tests/
 **/tests/**
 test_*.py
 *_test.py
-file.md
+
 
 # Pytest + coverage cruft
 .pytest_cache/
@@ -69,6 +69,7 @@ coverage.xml
 .pytest_cache/
 cover/
 junit.xml
+file.md
 
 # Translations
 *.mo
