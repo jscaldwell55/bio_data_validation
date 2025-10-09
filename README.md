@@ -1,13 +1,6 @@
 # Bio-Data Validation System
 
-## Production-Grade Multi-Agent Architecture for Bioinformatics Data Quality
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Poetry](https://img.shields.io/badge/dependency%20manager-poetry-blue)](https://python-poetry.org/)
-[![FastAPI](https://img.shields.io/badge/api-fastapi-009688)](https://fastapi.tiangolo.com/)
-[![Prometheus](https://img.shields.io/badge/monitoring-prometheus-e6522c)](https://prometheus.io/)
-[![Grafana](https://img.shields.io/badge/visualization-grafana-orange)](https://grafana.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
