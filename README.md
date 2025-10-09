@@ -56,7 +56,7 @@ A production-grade validation system designed to address the critical data integ
 The system employs a **hybrid architecture** that balances performance and intelligence:
 
 - **Functions/Classes** for high-performance, deterministic validation
-- **Agents** (only 2) for orchestration and human-in-the-loop learning
+- **Agentic** for orchestration and human-in-the-loop learning
 - **Vectorized Operations** using pandas for computational efficiency
 - **Batch Processing** for external API calls with connection pooling and retry logic
 - **Policy-Driven Decisions** using table-based YAML configuration
