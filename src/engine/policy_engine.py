@@ -1,7 +1,7 @@
 # src/engine/policy_engine.py
 """
 Policy-based decision engine for validation outcomes.
-Uses configuration-driven rules to make accept/reject decisions.
+Supports both YAML config and programmatic DecisionTable.
 """
 import logging
 from typing import Dict, Any, Optional, Union
@@ -13,6 +13,7 @@ from src.schemas.base_schemas import (
     ValidationSeverity,
     serialize_for_json
 )
+from src.engine.decision_tables import DecisionTable, DecisionTablePresets
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +21,29 @@ logger = logging.getLogger(__name__)
 class PolicyEngine(ConfigurableComponent):
     """
     Makes validation decisions based on configured policies.
-    Uses table-driven decision logic for transparency and maintainability.
+    Supports both YAML configuration and programmatic DecisionTable.
     """
     
     def __init__(
         self,
         config: Optional[Union[str, Path, Dict[str, Any]]] = None,
         config_path: Optional[Union[str, Path]] = None,
+        decision_table: Optional[DecisionTable] = None,
+        use_decision_table: bool = False,
         strict: bool = False,
         **kwargs
     ):
-        """Initialize with policy configuration."""
+        """
+        Initialize with policy configuration.
+        
+        Args:
+            config: YAML path or dict configuration
+            config_path: Alias for config
+            decision_table: Optional DecisionTable instance
+            use_decision_table: If True, use DecisionTable instead of YAML
+            strict: Strict mode for config loading
+            **kwargs: Additional config overrides
+        """
         # Support config_path as alias for config
         if config_path is not None and config is None:
             config = config_path
@@ -38,20 +51,27 @@ class PolicyEngine(ConfigurableComponent):
         # Call parent __init__ first to load config
         super().__init__(config, strict=strict, **kwargs)
         
-        # Extract policy components from loaded config
-        self.decision_matrix = self.config.get('decision_matrix', {})
-        self.review_triggers = self.config.get('human_review_triggers', {})
+        # Initialize decision mechanism
+        self.use_decision_table = use_decision_table or decision_table is not None
         
-        logger.info(f"PolicyEngine initialized: {self.decision_matrix}")
+        if self.use_decision_table:
+            # Use programmatic DecisionTable
+            self.decision_table = decision_table or DecisionTablePresets.production()
+            logger.info(f"PolicyEngine initialized with DecisionTable: {len(self.decision_table.rules)} rules")
+        else:
+            # Use YAML-based configuration
+            self.decision_matrix = self.config.get('decision_matrix', {})
+            self.review_triggers = self.config.get('human_review_triggers', {})
+            logger.info(f"PolicyEngine initialized with YAML config: {self.decision_matrix}")
     
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default policy configuration."""
         return {
             'decision_matrix': {
-                'critical_threshold': 1,           # Any critical issue = reject
-                'error_threshold': 5,              # 5+ errors = reject
-                'warning_threshold': 10,           # 10+ warnings = conditional
-                'moderate_warning_threshold': 5    # 5+ warnings = conditional
+                'critical_threshold': 1,
+                'error_threshold': 5,
+                'warning_threshold': 10,
+                'moderate_warning_threshold': 5
             },
             'human_review_triggers': {
                 'on_critical': True,
@@ -64,20 +84,21 @@ class PolicyEngine(ConfigurableComponent):
         """Make final validation decision based on policy rules."""
         # Count issues by severity across all stages
         severity_counts = self._count_severities(validation_report)
-
-        # Apply decision matrix - returns Decision enum
-        decision_enum = self._apply_decision_matrix(severity_counts)
-
-        # Determine if human review is required
-        requires_review = self._should_trigger_review(decision_enum, severity_counts)
-
-        # Generate rationale that matches the decision
-        rationale = self._generate_rationale(decision_enum, severity_counts)
         
-        # ADDED: Log decision for debugging
+        # Apply decision logic (either DecisionTable or YAML-based)
+        if self.use_decision_table:
+            decision_enum = self.decision_table.make_decision(severity_counts)
+            requires_review = self.decision_table.check_review_trigger(severity_counts)
+            rationale = self.decision_table.get_rationale(decision_enum, severity_counts)
+        else:
+            decision_enum = self._apply_decision_matrix(severity_counts)
+            requires_review = self._should_trigger_review(decision_enum, severity_counts)
+            rationale = self._generate_rationale(decision_enum, severity_counts)
+        
+        # Log decision for debugging
         logger.info(f"Policy decision: {decision_enum.value} - {rationale}")
         logger.info(f"Severity counts: {severity_counts}")
-
+        
         # Always return decision as lowercase string
         result = {
             'decision': decision_enum.value.lower(),
@@ -85,11 +106,11 @@ class PolicyEngine(ConfigurableComponent):
             'requires_review': requires_review,
             'severity_counts': severity_counts
         }
-
+        
         # Add conditions for CONDITIONAL_ACCEPT
         if decision_enum == Decision.CONDITIONAL_ACCEPT:
             result['conditions'] = self._generate_conditions(severity_counts, validation_report)
-
+        
         return result
     
     def _count_severities(self, report: Dict[str, Any]) -> Dict[str, int]:
@@ -123,8 +144,8 @@ class PolicyEngine(ConfigurableComponent):
     
     def _apply_decision_matrix(self, severity_counts: Dict[str, int]) -> Decision:
         """
-        Apply decision matrix rules to determine outcome.
-    
+        Apply YAML-based decision matrix rules.
+        
         Decision Rules:
         1. Any critical issue → REJECTED
         2. 5+ errors → REJECTED  
@@ -135,27 +156,27 @@ class PolicyEngine(ConfigurableComponent):
         critical_threshold = self.decision_matrix.get('critical_threshold', 1)
         error_threshold = self.decision_matrix.get('error_threshold', 5)
         moderate_warning_threshold = self.decision_matrix.get('moderate_warning_threshold', 5)
-
+        
         # Rule 1: Any critical issue = REJECTED
         if severity_counts['critical'] >= critical_threshold:
             logger.debug(f"Decision: REJECTED (critical >= {critical_threshold})")
             return Decision.REJECTED
-
+        
         # Rule 2: Too many errors (>=5) = REJECTED
         if severity_counts['error'] >= error_threshold:
             logger.debug(f"Decision: REJECTED (error >= {error_threshold})")
             return Decision.REJECTED
-
+        
         # Rule 3: Any errors (1-4) = CONDITIONAL_ACCEPT
         if severity_counts['error'] > 0:
             logger.debug(f"Decision: CONDITIONAL_ACCEPT ({severity_counts['error']} errors)")
             return Decision.CONDITIONAL_ACCEPT
-
+        
         # Rule 4: Many warnings (>=5, no errors) = CONDITIONAL_ACCEPT
         if severity_counts['warning'] >= moderate_warning_threshold:
             logger.debug(f"Decision: CONDITIONAL_ACCEPT ({severity_counts['warning']} warnings)")
             return Decision.CONDITIONAL_ACCEPT
-
+        
         # Rule 5: Few/no warnings (0-4), no errors = ACCEPTED
         logger.debug("Decision: ACCEPTED")
         return Decision.ACCEPTED
@@ -165,7 +186,7 @@ class PolicyEngine(ConfigurableComponent):
         decision: Decision,
         severity_counts: Dict[str, int]
     ) -> bool:
-        """Determine if human review should be triggered."""
+        """Determine if human review should be triggered (YAML-based)."""
         # Always review rejections and conditional accepts
         if decision in [Decision.REJECTED, Decision.CONDITIONAL_ACCEPT]:
             return True
@@ -187,11 +208,7 @@ class PolicyEngine(ConfigurableComponent):
         return False
     
     def _generate_rationale(self, decision: Decision, severity_counts: Dict[str, int]) -> str:
-        """
-        Generate human-readable decision rationale.
-        
-        CRITICAL FIX: Rationale MUST match decision exactly.
-        """
+        """Generate human-readable decision rationale (YAML-based)."""
         # Handle both Decision enum and string input
         if isinstance(decision, str):
             try:
@@ -202,7 +219,7 @@ class PolicyEngine(ConfigurableComponent):
         # Get thresholds for context
         error_threshold = self.decision_matrix.get('error_threshold', 5)
         
-        # REJECTED Decision - Must start with "REJECTED:"
+        # REJECTED Decision
         if decision == Decision.REJECTED:
             reasons = []
             
@@ -217,7 +234,7 @@ class PolicyEngine(ConfigurableComponent):
             else:
                 return "REJECTED: Data quality standards not met"
         
-        # CONDITIONAL_ACCEPT Decision - Must start with "Conditional accept:"
+        # CONDITIONAL_ACCEPT Decision
         elif decision == Decision.CONDITIONAL_ACCEPT:
             parts = []
             
@@ -238,7 +255,7 @@ class PolicyEngine(ConfigurableComponent):
                 return f"Accepted with {severity_counts['warning']} minor warning(s)"
             else:
                 return "All validation checks passed"
-
+    
     def _generate_conditions(
         self,
         severity_counts: Dict[str, int],
@@ -246,26 +263,26 @@ class PolicyEngine(ConfigurableComponent):
     ) -> list:
         """Generate conditions/recommendations for CONDITIONAL_ACCEPT decisions."""
         conditions = []
-
+        
         if severity_counts['error'] > 0:
             conditions.append(f"Review and address {severity_counts['error']} error(s) before production use")
-
+        
         if severity_counts['warning'] > 0:
             conditions.append(f"Consider reviewing {severity_counts['warning']} warning(s) for optimization")
-
+        
         # Add specific recommendations based on issues
         for stage_name, stage_data in validation_report.get('stages', {}).items():
             if isinstance(stage_data, dict):
                 issues = stage_data.get('issues', [])
                 if issues:
                     conditions.append(f"Review {stage_name} validation issues")
-
+        
         return conditions if conditions else ["Manual review recommended before proceeding"]
-
+    
     def count_issues_by_severity(self, report: Dict[str, Any]) -> Dict[ValidationSeverity, int]:
         """Public method to count issues by severity across all validation stages."""
         string_counts = self._count_severities(report)
-
+        
         # Convert string keys to enum keys
         return {
             ValidationSeverity.CRITICAL: string_counts.get('critical', 0),

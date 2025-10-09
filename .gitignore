@@ -36,6 +36,19 @@ MANIFEST
 *.manifest
 *.spec
 
+# Ignore test files and folders
+tests/
+**/tests/**
+test_*.py
+*_test.py
+tests/
+
+# Pytest + coverage cruft
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/

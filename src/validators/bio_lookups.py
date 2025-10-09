@@ -21,6 +21,10 @@ from collections import defaultdict
 from dotenv import load_dotenv
 
 from src.schemas.base_schemas import ValidationResult, ValidationIssue, ValidationSeverity
+from src.monitoring.metrics import (
+    track_validation_metrics,
+    record_external_api_call
+)
 
 # Load environment variables
 load_dotenv()
@@ -144,21 +148,16 @@ class NCBIBatchClient:
     ) -> Dict[str, Dict[str, Any]]:
         """
         Validate multiple genes in a SINGLE batched API request.
-        
-        This is the key optimization: Instead of N requests for N genes,
-        we make 1 request for all genes.
-        
-        Args:
-            genes: List of gene symbols to validate
-            organism: Target organism (default: 'human')
-            
-        Returns:
-            Dictionary mapping gene symbols to validation results
         """
         if not genes:
             return {}
         
-        # Build batched query: (BRCA1[Gene Name] OR TP53[Gene Name] OR ...) AND human[Organism]
+        # ═══════════════════════════════════════════════════════════════════
+        # MONITORING: Track API call timing - ADD THIS
+        # ═══════════════════════════════════════════════════════════════════
+        api_start_time = time.time()
+        
+        # Build batched query
         gene_terms = " OR ".join([f"{gene}[Gene Name]" for gene in genes])
         term = f"({gene_terms}) AND {organism}[Organism]"
         
@@ -166,7 +165,7 @@ class NCBIBatchClient:
             "db": "gene",
             "term": term,
             "retmode": "json",
-            "retmax": len(genes) * 3  # Allow multiple matches per gene
+            "retmax": len(genes) * 3
         }
         
         if self.api_key:
@@ -176,6 +175,20 @@ class NCBIBatchClient:
         search_data = await self._make_request_with_retry(
             f"{self.base_url}/esearch.fcgi",
             params
+        )
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # MONITORING: Record API call metrics - ADD THIS
+        # ═══════════════════════════════════════════════════════════════════
+        api_duration = time.time() - api_start_time
+        api_status = "success" if search_data else "error"
+        
+        record_external_api_call(
+            provider="ncbi",
+            endpoint="esearch",
+            duration=api_duration,
+            status=api_status,
+            batch_size=len(genes)
         )
         
         if not search_data:
@@ -345,6 +358,23 @@ class BioLookupsValidator:
         else:
             logger.info("BioLookupsValidator: No API key (3 req/sec)")
             logger.info(f"  Batch Size: {self.batch_size} genes/batch")
+
+    @track_validation_metrics("BioLookupsValidator")
+    async def validate(
+        self,
+        df: pd.DataFrame,
+        validation_type: str = 'gene_symbols'
+    ) -> ValidationResult:
+        """
+        Perform external database validation with optimized batching.
+        
+        Args:
+            df: DataFrame with biological identifiers
+            validation_type: Type of validation ('gene_symbols', 'protein_ids')
+            
+        Returns:
+            ValidationResult with comprehensive lookup results
+        """
     
     async def validate(
         self,

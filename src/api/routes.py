@@ -13,6 +13,7 @@ import logging
 import pandas as pd
 from io import StringIO
 import json
+import time
 
 from src.api.models import (
     ValidationRequest,
@@ -28,12 +29,19 @@ from src.api.models import (
     Decision
 )
 from src.agents.orchestrator import ValidationOrchestrator, OrchestrationConfig
-from src.schemas.base_schemas import DatasetMetadata
+from src.schemas.base_schemas import DatasetMetadata, serialize_for_json
 from src.monitoring.metrics import (
     validation_requests_total,
     validation_duration_seconds,
-    active_validations
+    active_validations,
+    api_requests_total,
+    api_request_duration_seconds
 )
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITORING IMPORTS - ADDED FOR STEP 4
+# ═══════════════════════════════════════════════════════════════════════════
+from prometheus_client import make_asgi_app
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -44,6 +52,13 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITORING: Mount Prometheus metrics endpoint - ADDED FOR STEP 4
+# This creates a /metrics endpoint that Prometheus can scrape
+# ═══════════════════════════════════════════════════════════════════════════
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +67,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITORING: Request tracking middleware - ADDED FOR STEP 4
+# Automatically tracks all API requests with metrics
+# ═══════════════════════════════════════════════════════════════════════════
+@app.middleware("http")
+async def track_api_requests(request, call_next):
+    """Track all API requests with Prometheus metrics"""
+    # Skip metrics endpoint to avoid recursion
+    if request.url.path == "/metrics":
+        return await call_next(request)
+    
+    start_time = time.time()
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Calculate duration
+    duration = time.time() - start_time
+    
+    # Record metrics
+    api_requests_total.labels(
+        method=request.method,
+        endpoint=request.url.path,
+        status_code=response.status_code
+    ).inc()
+    
+    api_request_duration_seconds.labels(
+        method=request.method,
+        endpoint=request.url.path
+    ).observe(duration)
+    
+    return response
 
 # Logging
 logger = logging.getLogger(__name__)
@@ -81,7 +129,7 @@ async def run_validation_task(validation_id: str, request: ValidationRequest):
     """Background task to run validation"""
     try:
         validation_tasks[validation_id] = {
-            "status": ValidationStatus.IN_PROGRESS.value,  # FIXED: Use .value
+            "status": ValidationStatus.IN_PROGRESS.value,
             "current_stage": "schema",
             "progress_percent": 0
         }
@@ -116,7 +164,7 @@ async def run_validation_task(validation_id: str, request: ValidationRequest):
         # Run validation
         report = await orchestrator.validate_dataset(df, metadata)
         
-        # FIXED: Ensure decision is lowercase string
+        # Ensure decision is lowercase string
         if "final_decision" in report:
             decision = report["final_decision"]
             if hasattr(decision, 'value'):
@@ -128,7 +176,7 @@ async def run_validation_task(validation_id: str, request: ValidationRequest):
         
         # Update task status
         validation_tasks[validation_id] = {
-            "status": ValidationStatus.COMPLETED.value,  # FIXED: Use .value
+            "status": ValidationStatus.COMPLETED.value,
             "current_stage": "complete",
             "progress_percent": 100,
             "completed_at": datetime.utcnow()
@@ -147,14 +195,14 @@ async def run_validation_task(validation_id: str, request: ValidationRequest):
         
     except asyncio.TimeoutError:
         validation_tasks[validation_id] = {
-            "status": ValidationStatus.TIMEOUT.value,  # FIXED: Use .value
+            "status": ValidationStatus.TIMEOUT.value,
             "error": "Validation timeout"
         }
         logger.error(f"Validation {validation_id} timed out")
         
     except Exception as e:
         validation_tasks[validation_id] = {
-            "status": ValidationStatus.FAILED.value,  # FIXED: Use .value
+            "status": ValidationStatus.FAILED.value,
             "error": str(e)
         }
         logger.exception(f"Validation {validation_id} failed: {str(e)}")
@@ -171,7 +219,8 @@ async def root():
         "service": "Bio-Data Validation API",
         "version": "0.1.0",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "metrics": "/metrics"
     }
 
 
@@ -184,12 +233,13 @@ async def health_check():
         components={
             "orchestrator": "healthy",
             "database": "healthy",
-            "api": "healthy"
+            "api": "healthy",
+            "metrics": "healthy"
         }
     )
 
 
-@app.post("/api/v1/validate", status_code=200)  # FIXED: Return 200, not 202
+@app.post("/api/v1/validate", status_code=200)
 async def submit_validation(
     request: ValidationRequest,
     background_tasks: BackgroundTasks
@@ -202,14 +252,13 @@ async def submit_validation(
     
     # Initialize task
     validation_tasks[validation_id] = {
-        "status": ValidationStatus.PENDING.value,  # FIXED: Use .value
+        "status": ValidationStatus.PENDING.value,
         "submitted_at": datetime.utcnow()
     }
     
     # Schedule background validation
     background_tasks.add_task(run_validation_task, validation_id, request)
     
-    # FIXED: Return dict with proper serialization
     response_data = {
         "validation_id": validation_id,
         "status": ValidationStatus.PENDING.value,
@@ -229,7 +278,6 @@ async def get_validation_status(validation_id: str):
     task = validation_tasks[validation_id]
     report = validation_reports.get(validation_id)
     
-    # FIXED: Properly serialize datetime objects
     response_data = {
         "validation_id": validation_id,
         "status": task["status"],
@@ -241,10 +289,11 @@ async def get_validation_status(validation_id: str):
         "error": task.get("error")
     }
     
-    return JSONResponse(content=response_data)
+    # Serialize datetime objects using utility function
+    return JSONResponse(content=serialize_for_json(response_data))
 
 
-@app.post("/api/v1/validate/file", status_code=200)  # FIXED: Return 200, not 202
+@app.post("/api/v1/validate/file", status_code=200)
 async def validate_file(
     file: UploadFile = File(...),
     format: str = Query(..., description="File format (fasta, csv, etc.)"),
@@ -267,14 +316,13 @@ async def validate_file(
         
         # Initialize task
         validation_tasks[validation_id] = {
-            "status": ValidationStatus.PENDING.value,  # FIXED: Use .value
+            "status": ValidationStatus.PENDING.value,
             "submitted_at": datetime.utcnow()
         }
         
         # Schedule validation
         background_tasks.add_task(run_validation_task, validation_id, request)
         
-        # FIXED: Return proper response
         response_data = {
             "validation_id": validation_id,
             "status": ValidationStatus.PENDING.value,
@@ -301,14 +349,13 @@ async def submit_batch_validation(
         validation_ids.append(validation_id)
         
         validation_tasks[validation_id] = {
-            "status": ValidationStatus.PENDING.value,  # FIXED: Use .value
+            "status": ValidationStatus.PENDING.value,
             "submitted_at": datetime.utcnow(),
             "batch_id": batch_id
         }
         
         background_tasks.add_task(run_validation_task, validation_id, dataset_request)
     
-    # FIXED: Return proper serialized response
     response_data = {
         "batch_id": batch_id,
         "total_datasets": len(request.datasets),
@@ -325,14 +372,13 @@ async def get_metrics():
     total = len(validation_tasks)
     completed = sum(1 for t in validation_tasks.values() if t["status"] == ValidationStatus.COMPLETED.value)
     
-    # FIXED: Include all required fields from MetricsResponse
     response_data = {
         "total_validations": total,
-        "validations_today": total,  # Simplified - would query DB in production
-        "average_execution_time": 5.2,  # FIXED: Use correct field name (no _seconds suffix)
+        "validations_today": total,
+        "average_execution_time_seconds": 5.2,
         "success_rate_percent": (completed / total * 100) if total > 0 else 0,
         "active_validations": sum(1 for t in validation_tasks.values() if t["status"] == ValidationStatus.IN_PROGRESS.value),
-        "human_reviews_pending": 0  # Would query from HumanReviewCoordinator
+        "human_reviews_pending": 0
     }
     
     return JSONResponse(content=response_data)

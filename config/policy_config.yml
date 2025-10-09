@@ -1,13 +1,22 @@
 # config/policy_config.yml
 # Policy configuration for validation decisions
+# 
+# This configuration determines how validation results are translated into
+# accept/reject decisions and when human review is triggered.
 
+# =============================================================================
+# Decision Matrix (Currently Used by PolicyEngine)
+# =============================================================================
 decision_matrix:
   # Thresholds for automated decisions
-  critical_threshold: 1      # Any critical issues = reject
-  error_threshold: 5         # 5+ errors = reject
-  warning_threshold: 10      # 10+ warnings = conditional accept
-  moderate_warning_threshold: 5  # 5+ warnings = conditional accept (allows 1-4 warnings to be accepted)
+  critical_threshold: 1      # Any critical issues = REJECTED
+  error_threshold: 5         # 5+ errors = REJECTED
+  warning_threshold: 10      # 10+ warnings = CONDITIONAL_ACCEPT
+  moderate_warning_threshold: 5  # 5+ warnings (no errors) = CONDITIONAL_ACCEPT
 
+# =============================================================================
+# Human Review Triggers
+# =============================================================================
 human_review_triggers:
   on_critical: true          # Always review critical issues
   error_count_threshold: 3   # Review if 3+ errors
@@ -15,6 +24,11 @@ human_review_triggers:
   confidence_threshold: 0.7  # Review if confidence < 70%
   on_novel_errors: true      # Review novel/unknown error types
 
+# =============================================================================
+# Policy Rules (Alternative/Future Implementation)
+# =============================================================================
+# These policies define decision logic in a more declarative way.
+# Currently not used by PolicyEngine, but available for future enhancement.
 policies:
   - id: POL_001
     name: "Critical Data Integrity"
@@ -33,36 +47,143 @@ policies:
   - id: POL_003
     name: "Moderate Issues"
     description: "Some issues present but data may be usable with caution"
-    condition: "severity.warning >= 3 AND severity.error < 5"
+    condition: "severity.warning >= 5 AND severity.error == 0"
     action: "conditional_accept"
     priority: 3
   
   - id: POL_004
+    name: "Minor Issues"
+    description: "Few errors present, review recommended"
+    condition: "severity.error > 0 AND severity.error < 5"
+    action: "conditional_accept"
+    priority: 4
+  
+  - id: POL_005
     name: "Clean Data"
     description: "Minimal or no issues detected"
-    condition: "severity.error == 0 AND severity.warning < 3"
+    condition: "severity.error == 0 AND severity.warning < 5"
     action: "accepted"
-    priority: 4
+    priority: 5
 
+# =============================================================================
+# Validation Workflow Configuration
+# =============================================================================
 validation_workflow:
   # Define which validators run in which order
   stages:
     - name: "schema"
       validators: ["schema_validator"]
-      blocking: true  # Failure stops workflow
+      blocking: true  # Failure stops workflow (short-circuit)
+      timeout_seconds: 60
       
     - name: "rules"
       validators: ["rule_validator"]
-      blocking: false
+      blocking: false  # Continue even if fails
+      timeout_seconds: 120
       
     - name: "biological"
       validators: ["bio_rules", "bio_lookups"]
-      parallel: true
+      parallel: true  # Run simultaneously
       blocking: false
+      timeout_seconds: 300
 
-# Decision rationale templates
+# =============================================================================
+# Decision Rationale Templates
+# =============================================================================
+# Templates for generating human-readable decision explanations
 decision_rationales:
   accepted: "All validation checks passed. No significant issues detected."
-  conditional_accept: "Validation completed with {warning_count} warnings. Data may be used with caution. Review recommended for critical applications."
-  rejected: "Validation failed with {error_count} errors and {critical_count} critical issues. Data quality is insufficient for use."
-  review_required: "Human review required due to: {review_reasons}"
+  
+  conditional_accept: >
+    Validation completed with {error_count} error(s) and {warning_count} warning(s). 
+    Data may be used with caution. Review recommended before production use.
+  
+  rejected: >
+    Validation failed with {critical_count} critical issue(s) and {error_count} error(s). 
+    Data quality is insufficient for use.
+  
+  review_required: >
+    Human review required due to: {review_reasons}
+
+# =============================================================================
+# Stage-Specific Thresholds (Optional - Future Enhancement)
+# =============================================================================
+# Override global thresholds for specific validation stages
+# stage_thresholds:
+#   schema:
+#     error_threshold: 0  # Schema errors are always fatal
+#   
+#   bio_lookups:
+#     error_threshold: 10  # More lenient for external API failures
+#     requires_review: true
+
+# =============================================================================
+# Custom Acceptance Conditions (Optional - Future Enhancement)
+# =============================================================================
+# Define custom conditions for specialized datasets
+# custom_conditions:
+#   - name: "High-quality research dataset"
+#     condition: "mean_efficiency_score > 0.9"
+#     warning_threshold: 15  # Allow more warnings
+#     
+#   - name: "Experimental exploratory dataset"
+#     condition: "dataset_type == 'experimental'"
+#     error_threshold: 10  # More lenient
+#     warning_threshold: 30
+
+# =============================================================================
+# Presets for Different Use Cases
+# =============================================================================
+# You can swap these in by changing which decision_matrix is active
+
+# Preset: Strict (Production)
+# ----------------------------
+# decision_matrix:
+#   critical_threshold: 1
+#   error_threshold: 1      # Reject on ANY error
+#   moderate_warning_threshold: 3
+#   warning_threshold: 5
+# human_review_triggers:
+#   error_count_threshold: 1
+#   warning_count_threshold: 3
+
+# Preset: Lenient (Exploratory Analysis)
+# ---------------------------------------
+# decision_matrix:
+#   critical_threshold: 1
+#   error_threshold: 10     # Allow many errors
+#   moderate_warning_threshold: 15
+#   warning_threshold: 30
+# human_review_triggers:
+#   error_count_threshold: 10
+#   warning_count_threshold: 30
+
+# Preset: Balanced (Research - DEFAULT - Currently Active)
+# ---------------------------------------------------------
+# This is the current configuration above
+# Good balance between quality assurance and flexibility
+
+# =============================================================================
+# Decision Logic Summary
+# =============================================================================
+# The current configuration implements this decision flow:
+#
+# 1. REJECTED if:
+#    - Any critical issue (critical_threshold: 1)
+#    - 5+ errors (error_threshold: 5)
+#
+# 2. CONDITIONAL_ACCEPT if:
+#    - 1-4 errors (any amount below error_threshold)
+#    - 5+ warnings with 0 errors (moderate_warning_threshold: 5)
+#    - 10+ warnings total (warning_threshold: 10)
+#
+# 3. ACCEPTED if:
+#    - 0 errors AND < 5 warnings
+#
+# 4. HUMAN_REVIEW triggered if:
+#    - Any critical issue
+#    - 3+ errors
+#    - 15+ warnings
+#    - Confidence < 70%
+#    - Novel error patterns detected
+# =============================================================================

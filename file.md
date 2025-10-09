@@ -4,6 +4,80 @@ This document describes every file in the bio_data_validation system, organized 
 
 ---
 
+## Root Directory
+
+Project configuration and utility files.
+
+### `Makefile`
+Build automation and task runner with commands for:
+- Dependency installation (install, install-dev)
+- Test execution (test, test-unit, test-integration, test-e2e, test-system, test-all)
+- Code quality (lint, format, test-cov)
+- Docker operations (docker-build)
+- CI/CD helpers (pre-commit, ci)
+- Cleanup and requirements export
+
+### `README.md`
+Project documentation and overview. Contains project description, setup instructions, and usage examples.
+
+### `pyproject.toml`
+Poetry project configuration file defining:
+- Project metadata (name, version, description, authors)
+- Python dependencies (pydantic, pandas, biopython, fastapi, etc.)
+- Development dependencies (pytest, black, mypy, etc.)
+- Tool configurations (black, isort, mypy, pytest, coverage)
+- Build system settings
+
+### `poetry.lock`
+Poetry dependency lock file ensuring reproducible builds. Auto-generated from pyproject.toml dependencies.
+
+### `requirements.txt`
+Production requirements exported from Poetry for compatibility with pip-based workflows. Generated via `make export-reqs`.
+
+### `requirements-dev.txt`
+Development and testing requirements exported from Poetry. Includes production requirements plus testing and linting tools.
+
+### `docker-compose.yml`
+Docker Compose orchestration for complete monitoring stack:
+- Bio-validation API service (port 8000)
+- Prometheus metrics collection (port 9090)
+- Grafana visualization (port 3000)
+- Volume management for persistent data
+- Health checks and restart policies
+
+### `check_ncbi_key.py`
+Utility script to verify NCBI API key configuration:
+- Loads and validates NCBI_API_KEY from .env file
+- Displays key status and rate limit information
+- Helps troubleshoot API authentication issues
+
+### `real_world_validation_test.py`
+Comprehensive end-to-end validation test script:
+- Creates realistic guide RNA datasets with various quality issues
+- Runs complete validation workflow through orchestrator
+- Generates colored terminal output with validation results
+- Saves reports in JSON, CSV, and Markdown formats
+- Demonstrates production usage patterns
+
+### `test_validator_diagnostics.py`
+Diagnostic test script for validator detection logic:
+- Tests duplicate sequence detection
+- Tests poly-T stretch detection
+- Tests guide length validation
+- Tests class imbalance detection
+- Tests missing value bias detection
+- Useful for debugging individual validator components
+
+### `debug_output.txt`
+Debug output file for troubleshooting (should be in .gitignore).
+
+### `file.md`
+This documentation file - comprehensive listing of all project files with descriptions.
+
+**Note:** `requirements.text` appears to be a duplicate/typo of `requirements.txt` and should potentially be removed or renamed.
+
+---
+
 ## config/
 
 Configuration files for the validation system.
@@ -47,6 +121,32 @@ Multi-stage Docker build configuration:
 - Security: runs as non-root user
 - Health check endpoint configuration
 - Exposes port 8000 for API access
+
+---
+
+## infrastructure/prometheus/
+
+Prometheus monitoring and alerting configuration.
+
+### `infrastructure/prometheus/prometheus.yml`
+Prometheus server configuration:
+- Global scrape settings (15s intervals)
+- Scrape targets for bio-validation API
+- Alert rule file references
+- Service discovery for Docker Compose
+- Prometheus self-monitoring
+
+### `infrastructure/prometheus/alerts.yml`
+Comprehensive Prometheus alerting rules:
+- **API Health**: API down, high error rate, slow responses
+- **Validation Performance**: High failure rates, timeouts, slow processing
+- **External APIs**: NCBI API errors, rate limiting, slow responses
+- **Data Quality**: Critical issues, duplicates, validator failures
+- **Human Review**: Queue backlog alerts
+- **System Resources**: Memory and CPU usage warnings
+- **Business Logic**: No validations, unusual volume, all rejections
+- Severity levels: critical, warning, info
+- Detailed annotations and recommended actions
 
 ---
 
@@ -111,6 +211,19 @@ Generates human-readable validation reports from validation results:
 
 ### `scripts/validation/validate_datasets.py`
 Batch validation script for processing multiple datasets through the validation pipeline.
+
+---
+
+## src/
+
+Source code for the validation system.
+
+### `src/__init__.py`
+Source package initialization module:
+- Imports monitoring setup
+- Initializes structured logging
+- Configures log level and format from settings
+- Called automatically on application startup
 
 ---
 
@@ -473,9 +586,32 @@ The bio_data_validation system is a comprehensive, production-grade validation f
 - **Policy-based decisions**: Configurable thresholds and rules
 - **External integrations**: NCBI and Ensembl database validation
 - **REST API**: Full-featured FastAPI service
-- **Monitoring**: Prometheus metrics and structured logging
+- **Monitoring**: Prometheus metrics, alerting, and structured logging
 - **Database**: SQLAlchemy-based persistence
-- **Testing**: Comprehensive unit, integration, and e2e test coverage
-- **Docker**: Production-ready containerization
+- **Testing**: Comprehensive unit, integration, e2e, and system test coverage
+- **Docker**: Production-ready containerization with Docker Compose orchestration
+- **Build automation**: Makefile with commands for testing, linting, and CI/CD
+- **Dependency management**: Poetry with pip-compatible requirements export
+- **Diagnostic tools**: Real-world validation tests and validator diagnostics
 
 All components are designed with performance, reliability, and maintainability in mind.
+
+### Project Structure Overview
+
+```
+bio_data_validation/
+├── Root configuration (Makefile, pyproject.toml, docker-compose.yml)
+├── config/ (application and validation settings)
+├── infrastructure/ (Docker and Prometheus configurations)
+├── scripts/ (example usage, metrics, setup, and validation scripts)
+├── src/ (core validation system)
+│   ├── agents/ (orchestration and human review)
+│   ├── api/ (FastAPI REST endpoints)
+│   ├── engine/ (policy and decision tables)
+│   ├── monitoring/ (logging and metrics)
+│   ├── schemas/ (Pydantic data models)
+│   ├── utils/ (batch processing, bio tools, database clients)
+│   └── validators/ (schema, rule, bio-rule, and bio-lookup validators)
+├── tests/ (unit, integration, e2e, and system tests)
+└── validation_output/ (generated validation reports)
+```

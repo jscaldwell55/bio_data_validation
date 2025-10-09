@@ -5,6 +5,19 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import logging
+from difflib import SequenceMatcher
+from src.monitoring.metrics import track_validation_metrics
+
+# Try to import fast Levenshtein library (optional)
+try:
+    import Levenshtein
+    HAS_LEVENSHTEIN = True
+    logger = logging.getLogger(__name__)
+    logger.info("✅ python-Levenshtein installed: Using fast C implementation")
+except ImportError:
+    HAS_LEVENSHTEIN = False
+    logger = logging.getLogger(__name__)
+    logger.info("ℹ️  python-Levenshtein not installed: Using difflib (slower but adequate)")
 
 from src.schemas.base_schemas import (
     ConfigurableComponent,
@@ -13,7 +26,6 @@ from src.schemas.base_schemas import (
     ValidationSeverity
 )
 
-logger = logging.getLogger(__name__)
 
 class RuleValidator(ConfigurableComponent):
     """
@@ -75,6 +87,23 @@ class RuleValidator(ConfigurableComponent):
                 'custom': []
             }
         }
+    
+    @track_validation_metrics("RuleValidator")
+    def validate(
+        self,
+        df: pd.DataFrame,
+        dataset_metadata: Optional[Dict[str, Any]] = None
+    ) -> ValidationResult:
+        """
+        Perform vectorized rule-based validation on DataFrame.
+        
+        Args:
+            df: DataFrame to validate
+            dataset_metadata: Optional metadata about the dataset
+            
+        Returns:
+            ValidationResult with all detected issues
+        """
     
     def validate(
         self,
@@ -223,7 +252,7 @@ class RuleValidator(ConfigurableComponent):
         return issues
     
     def _check_duplicates(self, df: pd.DataFrame) -> List[ValidationIssue]:
-        """Vectorized duplicate detection"""
+        """Vectorized duplicate detection with Levenshtein distance"""
         issues = []
         
         duplicate_rules = self.rules.get('duplicates', {})
@@ -256,7 +285,7 @@ class RuleValidator(ConfigurableComponent):
                         metadata={"duplicate_count": int(dup_count)}
                     ))
         
-        # FIXED: Check for near-duplicate sequences (sequence similarity)
+        # Check for near-duplicate sequences using Levenshtein distance
         similarity_threshold = duplicate_rules.get('sequence_similarity_threshold', 0.95)
         sequence_columns = duplicate_rules.get('sequence_columns', [])
         
@@ -275,8 +304,7 @@ class RuleValidator(ConfigurableComponent):
                         metadata={"duplicate_count": int(exact_dup_count)}
                     ))
                 
-                # For near-duplicate detection (more sophisticated)
-                # This is a simplified version - production would use edit distance
+                # Near-duplicate detection with Levenshtein distance
                 near_dups = self._find_near_duplicate_sequences(
                     df[col].tolist(), 
                     similarity_threshold
@@ -287,7 +315,10 @@ class RuleValidator(ConfigurableComponent):
                         message=f"Found {near_dups} near-duplicate sequence pairs (>{similarity_threshold*100}% similar)",
                         severity=ValidationSeverity.WARNING,
                         rule_id="DUP_004",
-                        metadata={"near_duplicate_pairs": near_dups}
+                        metadata={
+                            "near_duplicate_pairs": near_dups,
+                            "method": "levenshtein" if HAS_LEVENSHTEIN else "difflib"
+                        }
                     ))
         
         return issues
@@ -298,7 +329,7 @@ class RuleValidator(ConfigurableComponent):
         
         bias_rules = self.rules.get('bias', {})
         
-        # FIXED: Check class imbalance for ANY column type
+        # Check class imbalance for ANY column type
         target_col = bias_rules.get('target_column')
         imbalance_threshold = bias_rules.get('imbalance_threshold', 0.3)
         
@@ -320,9 +351,8 @@ class RuleValidator(ConfigurableComponent):
                         }
                     ))
             
-            # FIXED: Also check continuous data by binning
+            # Also check continuous data by binning
             elif pd.api.types.is_numeric_dtype(df[target_col]):
-                # For continuous data, bin into quartiles and check distribution
                 try:
                     binned = pd.qcut(df[target_col], q=4, labels=False, duplicates='drop')
                     value_counts = binned.value_counts(normalize=True)
@@ -342,7 +372,7 @@ class RuleValidator(ConfigurableComponent):
                 except Exception as e:
                     logger.debug(f"Could not bin continuous data for {target_col}: {e}")
         
-        # FIXED: Check for missing value bias (vectorized)
+        # Check for missing value bias (vectorized)
         missing_threshold = bias_rules.get('missing_value_threshold', 0.1)
         missing_props = df.isnull().sum() / len(df)
         biased_cols = missing_props[missing_props > missing_threshold]
@@ -422,32 +452,70 @@ class RuleValidator(ConfigurableComponent):
     @staticmethod
     def _find_near_duplicate_sequences(sequences: List[str], threshold: float) -> int:
         """
-        Find near-duplicate sequences (simplified implementation)
-        Returns count of near-duplicate pairs found
+        Find near-duplicate sequences using Levenshtein distance.
+        
+        Uses python-Levenshtein if available (100x faster), otherwise falls back to difflib.
+        
+        Args:
+            sequences: List of sequences to compare
+            threshold: Similarity threshold (0.0 to 1.0)
+            
+        Returns:
+            Count of near-duplicate pairs found
         """
-        # FIXED: Simplified implementation that actually works
-        # In production, use Levenshtein distance or similar
         near_dup_count = 0
         
-        # Convert to set for faster comparison
+        # Get unique sequences
         unique_seqs = list(set(sequences))
         
-        # For small datasets, do pairwise comparison
-        if len(unique_seqs) < 1000:
+        # Only process if dataset is reasonable size
+        if len(unique_seqs) > 1000:
+            logger.warning(f"Large dataset ({len(unique_seqs)} unique sequences), "
+                         f"near-duplicate detection may be slow")
+        
+        # For small-to-medium datasets, do pairwise comparison
+        if len(unique_seqs) < 5000:
             for i in range(len(unique_seqs)):
                 for j in range(i + 1, len(unique_seqs)):
                     seq1, seq2 = unique_seqs[i], unique_seqs[j]
                     
-                    # Skip if lengths are too different
-                    if abs(len(seq1) - len(seq2)) > max(len(seq1), len(seq2)) * (1 - threshold):
+                    # Quick length check to skip very different sequences
+                    len_ratio = min(len(seq1), len(seq2)) / max(len(seq1), len(seq2))
+                    if len_ratio < threshold:
                         continue
                     
-                    # Simple similarity: count matching characters at same positions
-                    if len(seq1) == len(seq2):
-                        matches = sum(c1 == c2 for c1, c2 in zip(seq1, seq2))
-                        similarity = matches / len(seq1)
-                        
-                        if similarity >= threshold and similarity < 1.0:
-                            near_dup_count += 1
+                    # Calculate similarity
+                    similarity = RuleValidator._sequence_similarity(seq1, seq2)
+                    
+                    if similarity >= threshold and similarity < 1.0:
+                        near_dup_count += 1
+        else:
+            logger.warning(f"Skipping near-duplicate detection for {len(unique_seqs)} sequences "
+                         f"(too large for pairwise comparison)")
         
         return near_dup_count
+    
+    @staticmethod
+    def _sequence_similarity(seq1: str, seq2: str) -> float:
+        """
+        Calculate sequence similarity using best available method.
+        
+        Priority:
+        1. python-Levenshtein (fastest, ~100x faster than pure Python)
+        2. difflib.SequenceMatcher (built-in, adequate performance)
+        
+        Args:
+            seq1: First sequence
+            seq2: Second sequence
+            
+        Returns:
+            Similarity score between 0.0 and 1.0
+        """
+        if HAS_LEVENSHTEIN:
+            # Use fast C implementation
+            # Levenshtein.ratio() returns similarity (1.0 = identical)
+            return Levenshtein.ratio(seq1, seq2)
+        else:
+            # Use built-in difflib (slower but adequate)
+            # SequenceMatcher.ratio() returns similarity (1.0 = identical)
+            return SequenceMatcher(None, seq1, seq2).ratio()

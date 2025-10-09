@@ -6,6 +6,7 @@ import pandas as pd
 import logging
 
 from src.schemas.base_schemas import ValidationResult, ValidationIssue, ValidationSeverity
+from src.monitoring.metrics import track_validation_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,23 @@ class BioRulesValidator:
             'AsCas12a': (20, 24),
             'LbCas12a': (20, 24),
         }
+
+    @track_validation_metrics("BioRulesValidator")
+    def validate(
+        self,
+        df: pd.DataFrame,
+        data_type: str = 'guide_rna'
+    ) -> ValidationResult:
+        """
+        Perform local biological validation checks.
+        
+        Args:
+            df: DataFrame with biological data
+            data_type: Type of biological data ('guide_rna', 'sequence', etc.)
+            
+        Returns:
+            ValidationResult with detected issues
+        """
     
     def validate(
         self,

@@ -1,0 +1,355 @@
+# infrastructure/prometheus/alerts.yml
+# Prometheus alerting rules for Bio-Data Validation System
+
+groups:
+  # =============================================================================
+  # API Health & Availability Alerts
+  # =============================================================================
+  - name: api_health
+    interval: 30s
+    rules:
+      - alert: APIDown
+        expr: up{job="bio-validation-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Bio-Validation API is down"
+          description: "The validation API has been unreachable for more than 1 minute."
+          action: "Check API logs and restart service if needed"
+      
+      - alert: APIHighErrorRate
+        expr: |
+          rate(api_requests_total{status_code=~"5.."}[5m]) /
+          rate(api_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          action: "Check application logs for errors"
+      
+      - alert: APISlowResponse
+        expr: |
+          histogram_quantile(0.95,
+            rate(api_request_duration_seconds_bucket[5m])
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API response time is slow"
+          description: "95th percentile response time is {{ $value }}s (threshold: 5s)"
+          action: "Check system resources and database performance"
+
+  # =============================================================================
+  # Validation Performance Alerts
+  # =============================================================================
+  - name: validation_performance
+    interval: 30s
+    rules:
+      - alert: HighValidationFailureRate
+        expr: |
+          rate(validation_requests_total{decision="rejected"}[10m]) /
+          rate(validation_requests_total[10m]) > 0.50
+        for: 15m
+        labels:
+          severity: warning
+          component: validation
+        annotations:
+          summary: "High validation failure rate"
+          description: "{{ $value | humanizePercentage }} of validations are being rejected (threshold: 50%)"
+          action: "Check if data quality issues or validation rules are too strict"
+      
+      - alert: ValidationTimeout
+        expr: |
+          rate(validation_requests_total{decision="error"}[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: validation
+        annotations:
+          summary: "Validation timeouts occurring"
+          description: "{{ $value }} validations per second are timing out"
+          action: "Check validator performance and increase timeout if needed"
+      
+      - alert: SlowValidationProcessing
+        expr: |
+          histogram_quantile(0.95,
+            rate(validation_duration_seconds_bucket{agent="Orchestrator"}[10m])
+          ) > 60
+        for: 15m
+        labels:
+          severity: warning
+          component: validation
+        annotations:
+          summary: "Validation processing is slow"
+          description: "95th percentile validation time is {{ $value }}s (threshold: 60s)"
+          action: "Optimize validators or increase resources"
+      
+      - alert: TooManyActiveValidations
+        expr: active_validations > 20
+        for: 10m
+        labels:
+          severity: warning
+          component: validation
+        annotations:
+          summary: "Too many concurrent validations"
+          description: "{{ $value }} validations are running concurrently (threshold: 20)"
+          action: "Consider increasing worker capacity or implementing queue"
+
+  # =============================================================================
+  # External API Alerts
+  # =============================================================================
+  - name: external_apis
+    interval: 30s
+    rules:
+      - alert: NCBIAPIHighErrorRate
+        expr: |
+          rate(external_api_calls_total{provider="ncbi",status="error"}[10m]) /
+          rate(external_api_calls_total{provider="ncbi"}[10m]) > 0.20
+        for: 10m
+        labels:
+          severity: warning
+          component: external_api
+        annotations:
+          summary: "High NCBI API error rate"
+          description: "{{ $value | humanizePercentage }} of NCBI API calls are failing (threshold: 20%)"
+          action: "Check NCBI service status and API key validity"
+      
+      - alert: NCBIAPIRateLimitHit
+        expr: |
+          rate(external_api_calls_total{provider="ncbi",status="error"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: info
+          component: external_api
+        annotations:
+          summary: "NCBI API rate limit may be hit"
+          description: "High rate of NCBI API errors detected"
+          action: "Check if API key is configured or reduce request rate"
+      
+      - alert: ExternalAPISlowResponse
+        expr: |
+          histogram_quantile(0.95,
+            rate(external_api_duration_seconds_bucket{provider="ncbi"}[10m])
+          ) > 10
+        for: 15m
+        labels:
+          severity: warning
+          component: external_api
+        annotations:
+          summary: "NCBI API responses are slow"
+          description: "95th percentile response time is {{ $value }}s (threshold: 10s)"
+          action: "Check NCBI service status or network connectivity"
+
+  # =============================================================================
+  # Data Quality Alerts
+  # =============================================================================
+  - name: data_quality
+    interval: 60s
+    rules:
+      - alert: HighCriticalIssueRate
+        expr: |
+          rate(issues_detected_total{severity="critical"}[30m]) /
+          rate(validation_records_processed_total[30m]) > 0.10
+        for: 30m
+        labels:
+          severity: warning
+          component: data_quality
+        annotations:
+          summary: "High rate of critical data issues"
+          description: "{{ $value | humanizePercentage }} of records have critical issues (threshold: 10%)"
+          action: "Review data sources and upstream data quality processes"
+      
+      - alert: HighDuplicateRate
+        expr: |
+          rate(duplicate_records_total[30m]) /
+          rate(validation_records_processed_total[30m]) > 0.15
+        for: 30m
+        labels:
+          severity: info
+          component: data_quality
+        annotations:
+          summary: "High duplicate record rate detected"
+          description: "{{ $value | humanizePercentage }} of records are duplicates (threshold: 15%)"
+          action: "Check data collection process for duplicate submissions"
+      
+      - alert: SpecificValidatorAlwaysFailing
+        expr: |
+          rate(validation_errors_total{severity="critical"}[1h]) /
+          rate(validation_records_processed_total[1h]) > 0.50
+        for: 1h
+        labels:
+          severity: critical
+          component: validator
+        annotations:
+          summary: "Validator {{ $labels.agent }} is failing frequently"
+          description: "{{ $value | humanizePercentage }} of validations fail at {{ $labels.agent }}"
+          action: "Check validator configuration and implementation"
+
+  # =============================================================================
+  # Human Review Queue Alerts
+  # =============================================================================
+  - name: human_review
+    interval: 60s
+    rules:
+      - alert: HumanReviewBacklog
+        expr: human_reviews_pending > 50
+        for: 30m
+        labels:
+          severity: warning
+          component: human_review
+        annotations:
+          summary: "Human review queue is building up"
+          description: "{{ $value }} validations are pending human review (threshold: 50)"
+          action: "Assign more reviewers or review auto-escalation rules"
+      
+      - alert: CriticalHumanReviewBacklog
+        expr: human_reviews_pending > 100
+        for: 1h
+        labels:
+          severity: critical
+          component: human_review
+        annotations:
+          summary: "Critical human review backlog"
+          description: "{{ $value }} validations are pending review (threshold: 100)"
+          action: "Urgent: Assign additional reviewers immediately"
+
+  # =============================================================================
+  # System Resource Alerts
+  # =============================================================================
+  - name: system_resources
+    interval: 30s
+    rules:
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage on validation system"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 85%)"
+          action: "Consider increasing memory or optimizing memory usage"
+      
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 15m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value | humanizePercentage }} (threshold: 80%)"
+          action: "Check for inefficient processes or increase CPU resources"
+
+  # =============================================================================
+  # Business Logic Alerts
+  # =============================================================================
+  - name: business_logic
+    interval: 60s
+    rules:
+      - alert: NoValidationsSubmitted
+        expr: |
+          rate(validation_requests_total[1h]) == 0
+        for: 2h
+        labels:
+          severity: info
+          component: business
+        annotations:
+          summary: "No validations submitted recently"
+          description: "No validation requests in the last 2 hours"
+          action: "Check if this is expected (off-hours) or investigate API accessibility"
+      
+      - alert: UnusualValidationVolume
+        expr: |
+          rate(validation_requests_total[10m]) > 10
+        for: 30m
+        labels:
+          severity: info
+          component: business
+        annotations:
+          summary: "Unusually high validation volume"
+          description: "{{ $value }} validations per second (typical: <10)"
+          action: "Monitor system resources and ensure adequate capacity"
+      
+      - alert: AllValidationsRejected
+        expr: |
+          (
+            rate(validation_requests_total{decision="rejected"}[30m]) /
+            rate(validation_requests_total[30m])
+          ) > 0.95
+        for: 30m
+        labels:
+          severity: critical
+          component: business
+        annotations:
+          summary: "Almost all validations are being rejected"
+          description: "{{ $value | humanizePercentage }} of validations rejected (threshold: 95%)"
+          action: "URGENT: Check if validation rules changed or data source has issues"
+
+# =============================================================================
+# ALERT SEVERITY LEVELS
+# =============================================================================
+# 
+# critical: Immediate action required, service degraded or down
+#   - API is down
+#   - All validations failing
+#   - Critical validator broken
+# 
+# warning: Should be addressed soon, potential issues
+#   - High error rates
+#   - Slow performance
+#   - Queue building up
+# 
+# info: Informational, monitor but may not require action
+#   - Usage patterns
+#   - Non-critical anomalies
+# 
+# =============================================================================
+
+# =============================================================================
+# ALERT ROUTING (Configure in Alertmanager)
+# =============================================================================
+# 
+# Example alertmanager.yml route configuration:
+# 
+# route:
+#   group_by: ['alertname', 'component']
+#   group_wait: 10s
+#   group_interval: 10s
+#   repeat_interval: 12h
+#   receiver: 'team-slack'
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'pagerduty'
+#     - match:
+#         severity: warning
+#       receiver: 'team-slack'
+#     - match:
+#         severity: info
+#       receiver: 'team-email'
+# 
+# receivers:
+#   - name: 'pagerduty'
+#     pagerduty_configs:
+#       - service_key: '<your-key>'
+#   
+#   - name: 'team-slack'
+#     slack_configs:
+#       - api_url: '<webhook-url>'
+#         channel: '#alerts'
+#   
+#   - name: 'team-email'
+#     email_configs:
+#       - to: 'team@example.com'
+# 
+# =============================================================================

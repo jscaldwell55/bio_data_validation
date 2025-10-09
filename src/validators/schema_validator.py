@@ -1,6 +1,6 @@
 # src/validators/schema_validator.py
 import time
-from typing import Any, List, Dict, Union, Optional
+from typing import Any, List, Dict, Union, Optional, Tuple
 from pydantic import BaseModel, Field, validator, ValidationError
 from Bio import SeqIO
 from io import StringIO
@@ -9,6 +9,11 @@ import logging
 
 from src.schemas.base_schemas import ValidationResult, ValidationIssue, ValidationSeverity
 from src.schemas.biological_schemas import SequenceRecord, GuideRNARecord
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITORING IMPORT - ADDED FOR STEP 3
+# ═══════════════════════════════════════════════════════════════════════════
+from src.monitoring.metrics import track_validation_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +24,11 @@ class SchemaValidator:
     def __init__(self):
         pass
     
+    # ═══════════════════════════════════════════════════════════════════════
+    # MONITORING DECORATOR - ADDED FOR STEP 3
+    # Add @track_validation_metrics decorator here
+    # ═══════════════════════════════════════════════════════════════════════
+    @track_validation_metrics("SchemaValidator")
     def validate(
         self,
         dataset: Any,
@@ -45,6 +55,11 @@ class SchemaValidator:
         return validate_schema(dataset, schema_type, strict)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITORING DECORATOR - ADDED FOR STEP 3
+# Add @track_validation_metrics decorator to the function too
+# ═══════════════════════════════════════════════════════════════════════════
+@track_validation_metrics("SchemaValidator")
 def validate_schema(
     dataset: Any,
     schema_type: str,
@@ -55,7 +70,7 @@ def validate_schema(
     
     Args:
         dataset: Data to validate (dict, list, DataFrame, or string)
-        schema_type: Type of schema ('fasta', 'guide_rna', 'json', etc.)
+        schema_type: Type of schema ('fasta', 'guide_rna', 'json', etc.')
         strict: Whether to fail on first error or collect all errors
         
     Returns:
@@ -64,6 +79,8 @@ def validate_schema(
     start_time = time.time()
     issues: List[ValidationIssue] = []
     records_processed = 0
+    
+    # ... rest of function unchanged ...
     
     try:
         if schema_type == 'fasta':
@@ -116,7 +133,7 @@ def validate_schema(
     )
 
 
-def _validate_fasta(data: str, strict: bool) -> tuple[List[ValidationIssue], int]:
+def _validate_fasta(data: str, strict: bool) -> Tuple[List[ValidationIssue], int]:
     """Validate FASTA format using BioPython"""
     issues = []
     records_processed = 0
@@ -174,7 +191,7 @@ def _validate_fasta(data: str, strict: bool) -> tuple[List[ValidationIssue], int
     return issues, records_processed
 
 
-def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: bool) -> tuple[List[ValidationIssue], int]:
+def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: bool) -> Tuple[List[ValidationIssue], int]:
     """Validate guide RNA records using Pydantic"""
     issues = []
     records_processed = 0
@@ -190,7 +207,7 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
             ))
             return issues, 0
         
-        # FIXED: Replace NaN with None for proper Pydantic validation
+        # Replace NaN with None for proper Pydantic validation
         records = data.where(pd.notnull(data), None).to_dict('records')
     elif isinstance(data, dict):
         records = [data]
@@ -206,23 +223,18 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
         ))
         return issues, 0
     
-    # FIXED: Track required fields from the schema
-    required_fields = set()
-    if hasattr(GuideRNARecord, '__fields__'):
-        # Pydantic v2
-        for field_name, field_info in GuideRNARecord.model_fields.items():
-            if field_info.is_required():
-                required_fields.add(field_name)
+    # Get required fields from GuideRNARecord schema
+    required_fields = _get_required_fields(GuideRNARecord)
     
     for idx, record in enumerate(records):
         try:
             records_processed += 1
             
-            # FIXED: Check for missing required fields before Pydantic validation
+            # Check for missing required fields BEFORE Pydantic validation
             if isinstance(record, dict):
                 missing_fields = required_fields - set(record.keys())
                 if missing_fields:
-                    for field in missing_fields:
+                    for field in sorted(missing_fields):
                         issues.append(ValidationIssue(
                             field=f"record_{idx}.{field}",
                             message=f"Missing required field: {field}",
@@ -232,10 +244,10 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
                         break
                     continue
                 
-                # FIXED: Check for null values in required fields
+                # Check for null values in required fields
                 null_required_fields = [f for f in required_fields if record.get(f) is None]
                 if null_required_fields:
-                    for field in null_required_fields:
+                    for field in sorted(null_required_fields):
                         issues.append(ValidationIssue(
                             field=f"record_{idx}.{field}",
                             message=f"Required field contains null value: {field}",
@@ -272,8 +284,15 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
                 error_msg = error['msg']
                 error_type = error.get('type', '')
                 
-                # FIXED: Better error message parsing
-                if 'type' in error_type:
+                # Better error message parsing
+                if 'missing' in error_type.lower():
+                    # Should be caught above, but handle anyway
+                    issues.append(ValidationIssue(
+                        field=f"record_{idx}.{field_path}",
+                        message=f"Missing required field: {field_path}",
+                        severity=ValidationSeverity.ERROR
+                    ))
+                elif 'type' in error_type.lower():
                     # Type validation errors
                     issues.append(ValidationIssue(
                         field=f"record_{idx}.{field_path}",
@@ -306,7 +325,7 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
     return issues, records_processed
 
 
-def _validate_json(data: Union[Dict, List], strict: bool) -> tuple[List[ValidationIssue], int]:
+def _validate_json(data: Union[Dict, List], strict: bool) -> Tuple[List[ValidationIssue], int]:
     """Validate JSON data structure"""
     issues = []
     records_processed = 1 if isinstance(data, dict) else len(data)
@@ -317,7 +336,7 @@ def _validate_json(data: Union[Dict, List], strict: bool) -> tuple[List[Validati
     return issues, records_processed
 
 
-def _validate_tabular(data: pd.DataFrame, strict: bool) -> tuple[List[ValidationIssue], int]:
+def _validate_tabular(data: pd.DataFrame, strict: bool) -> Tuple[List[ValidationIssue], int]:
     """Validate tabular data using pandas"""
     issues = []
     records_processed = len(data)
@@ -350,3 +369,30 @@ def _validate_tabular(data: pd.DataFrame, strict: bool) -> tuple[List[Validation
         ))
     
     return issues, records_processed
+
+
+def _get_required_fields(model: type[BaseModel]) -> set:
+    """
+    Extract required field names from a Pydantic model.
+    Works with both Pydantic v1 and v2.
+    
+    Args:
+        model: Pydantic model class
+        
+    Returns:
+        Set of required field names
+    """
+    required_fields = set()
+    
+    # Pydantic v2
+    if hasattr(model, 'model_fields'):
+        for field_name, field_info in model.model_fields.items():
+            if field_info.is_required():
+                required_fields.add(field_name)
+    # Pydantic v1 (fallback)
+    elif hasattr(model, '__fields__'):
+        for field_name, field_info in model.__fields__.items():
+            if field_info.required:
+                required_fields.add(field_name)
+    
+    return required_fields

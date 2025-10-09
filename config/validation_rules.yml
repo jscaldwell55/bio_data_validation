@@ -1,11 +1,25 @@
-# Validation rules configuration
+# config/validation_rules.yml
+# Validation rules configuration for biological data validation
 
 rules:
   consistency:
-    # Required columns - make optional for guide_rna format
+    # Required columns - empty by default for flexibility
+    # Uncomment for guide_rna format:
+    # required_columns:
+    #   - guide_id
+    #   - sequence
+    #   - pam_sequence
+    #   - target_gene
+    #   - organism
     required_columns: []
     
     # Expected data types for columns (only check if present)
+    # Uncomment to enable type checking:
+    # column_types:
+    #   guide_id: string
+    #   sequence: string
+    #   gc_content: float
+    #   efficiency_score: float
     column_types: {}
     
     # Value range constraints (only check if column exists)
@@ -19,12 +33,23 @@ rules:
       on_target_score:
         min: 0.0
         max: 1.0
+      off_target_score:
+        min: 0.0
+        max: 1.0
+      # Add more as needed:
+      # specificity_score:
+      #   min: 0.0
+      #   max: 1.0
     
     # Cross-column validation rules
     cross_column:
       - column1: end_position
         operator: ">"
         column2: start_position
+      # Add more cross-column rules as needed:
+      # - column1: on_target_score
+      #   operator: ">"
+      #   column2: off_target_score
   
   duplicates:
     # Check for duplicate rows
@@ -38,20 +63,86 @@ rules:
     sequence_columns:
       - sequence
     
-    # Similarity threshold for near-duplicate sequences
+    # Similarity threshold for near-duplicate sequences (0.0-1.0)
+    # 0.95 = 95% similar (e.g., 1-2 mismatches in 20bp guide)
     sequence_similarity_threshold: 0.95
   
   bias:
     # Column containing class labels (null = don't check by default)
+    # Set to column name to enable bias detection:
+    # target_column: efficiency_category  # e.g., 'high', 'medium', 'low'
     target_column: null
     
     # Class imbalance threshold (minority class < this ratio)
+    # 0.3 = minority class must be at least 30% of dataset
     imbalance_threshold: 0.3
     
     # Missing value threshold (missing > this ratio triggers warning)
+    # 0.1 = warn if >10% of values are missing
     missing_value_threshold: 0.1
     
     # Columns to check for distribution bias (empty = none by default)
+    # Uncomment to enable skewness checks:
+    # check_distribution_bias:
+    #   - efficiency_score
+    #   - gc_content
     check_distribution_bias: []
   
+  # Custom rules (uses pandas query syntax)
+  # Examples:
+  # custom:
+  #   - id: CUSTOM_001
+  #     field: sequence
+  #     expression: "sequence.str.len() >= 18"
+  #     message: "Sequence must be at least 18bp"
+  #     severity: error
+  #   
+  #   - id: CUSTOM_002
+  #     field: gc_content
+  #     expression: "gc_content >= 0.4 and gc_content <= 0.7"
+  #     message: "GC content should be between 40-70% for optimal efficiency"
+  #     severity: warning
   custom: []
+
+# =============================================================================
+# USAGE EXAMPLES
+# =============================================================================
+# 
+# Example 1: Strict guide RNA validation
+# --------------------------------------
+# rules:
+#   consistency:
+#     required_columns:
+#       - guide_id
+#       - sequence
+#       - pam_sequence
+#       - target_gene
+#     value_ranges:
+#       gc_content: {min: 0.4, max: 0.7}  # Optimal range
+#   duplicates:
+#     unique_columns: [guide_id]
+#     sequence_similarity_threshold: 0.90  # Stricter
+# 
+# Example 2: Lenient exploratory analysis
+# ----------------------------------------
+# rules:
+#   consistency:
+#     required_columns: []  # No requirements
+#   duplicates:
+#     check_duplicate_rows: false  # Allow duplicates
+#     sequence_similarity_threshold: 0.99  # Only flag near-identical
+#   bias:
+#     missing_value_threshold: 0.5  # Allow up to 50% missing
+# 
+# Example 3: Production ML pipeline
+# ----------------------------------
+# rules:
+#   bias:
+#     target_column: efficiency_category
+#     imbalance_threshold: 0.25  # Stricter balance requirement
+#     missing_value_threshold: 0.05  # Very strict
+#     check_distribution_bias:
+#       - efficiency_score
+#       - gc_content
+#       - on_target_score
+# =============================================================================
