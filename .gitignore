@@ -9,6 +9,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
 # C extensions
 *.so
 
@@ -36,12 +37,15 @@ MANIFEST
 *.manifest
 *.spec
 
+# Ignore these dirs at repo root
+/data/
+/tests/
+
 # Ignore test files and folders
 tests/
 **/tests/**
 test_*.py
 *_test.py
-tests/
 
 # Pytest + coverage cruft
 .pytest_cache/
