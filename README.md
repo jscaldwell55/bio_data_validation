@@ -1067,17 +1067,6 @@ bio-data-validation/
 
 ---
 
-## Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Make changes and add tests
-4. Run quality checks (`poetry run pytest && poetry run black src`)
-5. Commit changes (`git commit -m 'Add amazing feature'`)
-6. Push to branch (`git push origin feature/amazing-feature`)
-7. Open Pull Request
-
----
 
 ## License
 
@@ -1085,18 +1074,7 @@ MIT License - See LICENSE file for details
 
 ---
 
-## Citation
 
-```bibtex
-@software{bio_data_validation_2025,
-  title = {Bio-Data Validation: Production-Grade Multi-Agent Architecture},
-  author = {Your Team},
-  year = {2025},
-  url = {https://github.com/your-org/bio-data-validation}
-}
-```
-
----
 
 ## Acknowledgments
 
@@ -1116,6 +1094,4 @@ Built following modern MLOps best practices with:
 
 ---
 
-**🎉 System Status: Fully Operational and Production Ready!**
 
-For questions or issues, check the [Troubleshooting](#troubleshooting) section or review the logs.
