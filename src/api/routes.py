@@ -2,7 +2,7 @@
 """
 FastAPI routes for validation API.
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Query, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
@@ -14,6 +14,7 @@ import pandas as pd
 from io import StringIO
 import json
 import time
+from pathlib import Path
 
 from src.api.models import (
     ValidationRequest,
@@ -39,9 +40,10 @@ from src.monitoring.metrics import (
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# MONITORING IMPORTS - ADDED FOR STEP 4
+# MONITORING IMPORTS - Prometheus metrics
 # ═══════════════════════════════════════════════════════════════════════════
-from prometheus_client import make_asgi_app
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -51,13 +53,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
-# ═══════════════════════════════════════════════════════════════════════════
-# MONITORING: Mount Prometheus metrics endpoint - ADDED FOR STEP 4
-# This creates a /metrics endpoint that Prometheus can scrape
-# ═══════════════════════════════════════════════════════════════════════════
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
 
 # CORS middleware
 app.add_middleware(
@@ -69,7 +64,42 @@ app.add_middleware(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# MONITORING: Request tracking middleware - ADDED FOR STEP 4
+# REPORT EXPORT CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+REPORT_OUTPUT_DIR = Path("validation_output")
+REPORT_OUTPUT_DIR.mkdir(exist_ok=True)
+
+def save_validation_report(validation_id: str, report: dict):
+    """
+    Save validation report to validation_output/ directory.
+    Creates JSON file with timestamp and validation ID.
+    """
+    try:
+        # Create filename with timestamp
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        filename = f"validation_{timestamp}_{validation_id[:8]}.json"
+        filepath = REPORT_OUTPUT_DIR / filename
+        
+        # Prepare report data
+        report_data = {
+            "validation_id": validation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "report": report
+        }
+        
+        # Save to file
+        with open(filepath, 'w') as f:
+            json.dump(serialize_for_json(report_data), f, indent=2)
+        
+        logger.info(f"📄 Report saved: {filepath}")
+        return str(filepath)
+        
+    except Exception as e:
+        logger.error(f"Failed to save report {validation_id}: {str(e)}")
+        return None
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITORING: Request tracking middleware
 # Automatically tracks all API requests with metrics
 # ═══════════════════════════════════════════════════════════════════════════
 @app.middleware("http")
@@ -171,15 +201,23 @@ async def run_validation_task(validation_id: str, request: ValidationRequest):
                 decision = decision.value
             report["final_decision"] = str(decision).lower()
         
-        # Store report
+        # Store report in memory
         validation_reports[validation_id] = report
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # SAVE REPORT TO FILE - NEW!
+        # ═══════════════════════════════════════════════════════════════════
+        saved_path = save_validation_report(validation_id, report)
+        if saved_path:
+            report["saved_to_file"] = saved_path
         
         # Update task status
         validation_tasks[validation_id] = {
             "status": ValidationStatus.COMPLETED.value,
             "current_stage": "complete",
             "progress_percent": 100,
-            "completed_at": datetime.utcnow()
+            "completed_at": datetime.utcnow(),
+            "report_file": saved_path
         }
         
         # Record metrics
@@ -211,7 +249,10 @@ async def run_validation_task(validation_id: str, request: ValidationRequest):
         active_validations.dec()
 
 
-# Routes
+# ═══════════════════════════════════════════════════════════════════════════
+# ROUTES
+# ═══════════════════════════════════════════════════════════════════════════
+
 @app.get("/", response_model=dict)
 async def root():
     """Root endpoint"""
@@ -236,6 +277,21 @@ async def health_check():
             "api": "healthy",
             "metrics": "healthy"
         }
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# METRICS ENDPOINT - FIXED to prevent 307 redirects
+# ═══════════════════════════════════════════════════════════════════════════
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    Returns metrics in Prometheus text format.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
     )
 
 
@@ -286,11 +342,53 @@ async def get_validation_status(validation_id: str):
         "submitted_at": task.get("submitted_at", datetime.utcnow()).isoformat() if isinstance(task.get("submitted_at"), datetime) else task.get("submitted_at"),
         "completed_at": task.get("completed_at").isoformat() if isinstance(task.get("completed_at"), datetime) else task.get("completed_at"),
         "report": report,
+        "report_file": task.get("report_file"),  # NEW: Path to saved file
         "error": task.get("error")
     }
     
     # Serialize datetime objects using utility function
     return JSONResponse(content=serialize_for_json(response_data))
+
+
+@app.get("/api/v1/reports")
+async def list_reports():
+    """
+    List all saved validation reports.
+    NEW ENDPOINT!
+    """
+    reports = []
+    for filepath in REPORT_OUTPUT_DIR.glob("validation_*.json"):
+        reports.append({
+            "filename": filepath.name,
+            "path": str(filepath),
+            "size_bytes": filepath.stat().st_size,
+            "created": datetime.fromtimestamp(filepath.stat().st_ctime).isoformat()
+        })
+    
+    reports.sort(key=lambda x: x["created"], reverse=True)
+    
+    return {
+        "total_reports": len(reports),
+        "reports": reports
+    }
+
+
+@app.get("/api/v1/reports/{filename}")
+async def get_report_file(filename: str):
+    """
+    Download a specific validation report.
+    NEW ENDPOINT!
+    """
+    filepath = REPORT_OUTPUT_DIR / filename
+    
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Report file not found")
+    
+    return FileResponse(
+        path=filepath,
+        media_type="application/json",
+        filename=filename
+    )
 
 
 @app.post("/api/v1/validate/file", status_code=200)
@@ -400,7 +498,10 @@ async def cancel_validation(validation_id: str):
     return {"message": "Validation cancelled"}
 
 
-# Exception handlers
+# ═══════════════════════════════════════════════════════════════════════════
+# EXCEPTION HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     return JSONResponse(

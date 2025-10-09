@@ -1,7 +1,0 @@
-DepMap CRISPR Validation Summary
-================================
-
-File: data/CRISPRGeneDependency.csv
-Shape: 1183 cell lines × 17916 genes
-Decision: rejected
-Issues: 1

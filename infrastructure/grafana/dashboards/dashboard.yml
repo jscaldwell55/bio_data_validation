@@ -1,0 +1,17 @@
+# infrastructure/grafana/dashboards/dashboard.yml
+# Grafana dashboard provisioning configuration
+# This tells Grafana where to find dashboard JSON files
+
+apiVersion: 1
+
+providers:
+  - name: 'Bio Validation Dashboards'
+    orgId: 1
+    folder: 'Bio-Data Validation'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true

@@ -1,39 +1,35 @@
 # infrastructure/prometheus/prometheus.yml
-# Docker Compose version - uses service names instead of localhost
+# Prometheus configuration for Bio-Data Validation System
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    monitor: 'bio-validation-monitor'
-    environment: 'development'
+    cluster: 'bio-validation'
+    environment: 'production'
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
 
 # Load alert rules
 rule_files:
-  - 'alerts.yml'
+  - "alerts.yml"
 
-# Alertmanager configuration (optional - uncomment when ready)
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets: ['alertmanager:9093']
-
+# Scrape configurations
 scrape_configs:
-  # Bio-Data Validation API (Docker service name)
+  # Bio-Data Validation API
   - job_name: 'bio-validation-api'
-    scrape_interval: 10s
-    scrape_timeout: 5s
+    scrape_interval: 15s
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['api:8000']  # Use Docker service name, not localhost
-        labels:
-          service: 'bio-validation'
-          component: 'api'
-  
+      - targets: ['api:8000']  # Use service name from docker-compose
+    # Alternative: Use container name if 'api' doesn't work
+    # - targets: ['bio-validation-api:8000']
+
   # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-        labels:
-          service: 'prometheus'
-          component: 'monitoring'
