@@ -237,6 +237,8 @@ class FormatType(SerializableEnum):
     CSV = "csv"
     JSON = "json"
     TABULAR = "tabular"
+    VARIANT_ANNOTATION = "variant_annotation"  # NEW: Phase 2
+    SAMPLE_METADATA = "sample_metadata"        # NEW: Phase 2
 
 
 class ReviewPriority(SerializableEnum):
@@ -261,6 +263,7 @@ class ValidationIssue(BaseModel):
     message: str
     severity: ValidationSeverity
     rule_id: Optional[str] = None
+    affected_records: int = 0  # ADDED: Track number of records affected by this issue
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

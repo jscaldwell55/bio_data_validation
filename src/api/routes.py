@@ -5,7 +5,7 @@ FastAPI routes for validation API.
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Query, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional, List
 import uuid
 import asyncio
 from datetime import datetime
@@ -496,6 +496,170 @@ async def cancel_validation(validation_id: str):
     validation_tasks[validation_id]["error"] = "Cancelled by user"
     
     return {"message": "Validation cancelled"}
+
+
+# =============================================================================
+# 🆕 CACHE MANAGEMENT ENDPOINTS
+# =============================================================================
+
+@app.get("/api/v1/cache/stats")
+async def get_cache_stats():
+    """
+    Get cache performance statistics.
+
+    Returns cache hit rate, size, and provider breakdown.
+    """
+    from src.utils.cache_manager import get_cache_manager
+
+    cache = get_cache_manager()
+    stats = cache.get_stats()
+
+    return {
+        "cache_enabled": cache.enable_cache,
+        "statistics": {
+            "total_requests": stats["total_requests"],
+            "cache_hits": stats["hits"],
+            "cache_misses": stats["misses"],
+            "hit_rate": f"{stats['hit_rate']:.1%}",
+            "api_call_savings": f"{stats['hit_rate'] * 100:.0f}%"
+        },
+        "storage": {
+            "cached_entries": stats.get("cached_entries", 0),
+            "cache_size_bytes": stats.get("cache_size_bytes", 0),
+            "cache_size_mb": f"{stats.get('cache_size_bytes', 0) / 1024 / 1024:.2f}"
+        },
+        "providers": stats.get("by_provider", {}),
+        "performance": {
+            "writes": stats["writes"],
+            "evictions": stats["evictions"],
+            "errors": stats["errors"]
+        },
+        "configuration": {
+            "ttl_hours": cache.ttl_hours,
+            "cache_path": str(cache.cache_path)
+        }
+    }
+
+
+@app.post("/api/v1/cache/clear")
+async def clear_cache(
+    expired_only: bool = Query(True, description="Clear only expired entries")
+):
+    """
+    Clear cache entries.
+
+    Args:
+        expired_only: If True, only clear expired entries. If False, clear all.
+    """
+    from src.utils.cache_manager import get_cache_manager
+
+    cache = get_cache_manager()
+
+    if not cache.enable_cache:
+        return {
+            "message": "Cache is disabled",
+            "entries_cleared": 0
+        }
+
+    if expired_only:
+        cleared = cache.clear_expired()
+        return {
+            "message": f"Cleared {cleared} expired cache entries",
+            "entries_cleared": cleared,
+            "operation": "clear_expired"
+        }
+    else:
+        # Note: Full cache clear - consider adding authentication for production
+        cache.clear_all()
+        return {
+            "message": "Cache cleared successfully",
+            "operation": "clear_all"
+        }
+
+
+@app.post("/api/v1/cache/warm")
+async def warm_cache(
+    background_tasks: BackgroundTasks,
+    genes: List[str] = Query(None, description="List of gene symbols to warm")
+):
+    """
+    Pre-populate cache with common genes.
+
+    This endpoint triggers background validation of commonly used genes
+    to improve performance for future queries.
+    """
+    from src.utils.cache_manager import get_cache_manager
+
+    cache = get_cache_manager()
+
+    if not cache.enable_cache:
+        return {
+            "message": "Cache is disabled",
+            "genes_warmed": 0
+        }
+
+    # Default common genes if none provided
+    if not genes:
+        genes = [
+            "BRCA1", "BRCA2", "TP53", "EGFR", "KRAS", "MYC", "PTEN",
+            "ALK", "BRAF", "PIK3CA", "RB1", "APC", "CDKN2A", "ERBB2",
+            "FGFR1", "FGFR2", "FGFR3", "IDH1", "IDH2", "KIT", "MET",
+            "NRAS", "PDGFRA", "RET", "ROS1", "VEGFA"
+        ]
+
+    # Prepare gene info for warming
+    common_genes = [
+        {"organism": "human", "gene_symbol": gene}
+        for gene in genes
+    ]
+
+    # Schedule cache warming in background
+    cache.warm_cache(common_genes)
+
+    return {
+        "message": f"Cache warming initiated for {len(genes)} genes",
+        "genes": genes[:10],  # Show first 10
+        "status": "warming_in_progress"
+    }
+
+
+@app.get("/api/v1/cache/lookup/{organism}/{gene_symbol}")
+async def lookup_cached_gene(
+    organism: str,
+    gene_symbol: str
+):
+    """
+    Check if a specific gene is cached and return cached result.
+
+    Useful for debugging and verifying cache state.
+    """
+    from src.utils.cache_manager import get_cache_manager
+
+    cache = get_cache_manager()
+
+    if not cache.enable_cache:
+        return {
+            "cached": False,
+            "message": "Cache is disabled"
+        }
+
+    result = cache.get(organism, gene_symbol)
+
+    if result:
+        return {
+            "cached": True,
+            "organism": organism,
+            "gene_symbol": gene_symbol,
+            "result": result,
+            "cache_hit": True
+        }
+    else:
+        return {
+            "cached": False,
+            "organism": organism,
+            "gene_symbol": gene_symbol,
+            "message": "Not found in cache or expired"
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -81,6 +81,44 @@ external_api_batch_size = Histogram(
     buckets=[1, 10, 25, 50, 100, 200, 500]
 )
 
+# Cache metrics
+cache_hits_total = Counter(
+    'cache_hits_total',
+    'Total cache hits',
+    ['cache_type']
+)
+
+cache_misses_total = Counter(
+    'cache_misses_total',
+    'Total cache misses',
+    ['cache_type']
+)
+
+cache_size_bytes = Gauge(
+    'cache_size_bytes',
+    'Current cache size in bytes',
+    ['cache_type']
+)
+
+cache_entries_total = Gauge(
+    'cache_entries_total',
+    'Total number of cached entries',
+    ['cache_type']
+)
+
+# Provider fallback metrics
+api_provider_fallback_total = Counter(
+    'api_provider_fallback_total',
+    'Total provider fallback events',
+    ['primary_provider', 'fallback_provider']
+)
+
+api_provider_success_rate = Gauge(
+    'api_provider_success_rate',
+    'Provider success rate',
+    ['provider']
+)
+
 # Data quality metrics
 issues_detected_total = Counter(
     'issues_detected_total',

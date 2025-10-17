@@ -3,6 +3,8 @@ import os
 import asyncio
 import time
 import uuid
+import yaml
+import hashlib
 from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
@@ -14,14 +16,12 @@ from dotenv import load_dotenv
 from src.schemas.base_schemas import ValidationResult, ValidationSeverity, DatasetMetadata, Decision
 from src.validators.schema_validator import validate_schema, SchemaValidator
 from src.validators.rule_validator import RuleValidator
-from src.validators.bio_rules import BioRulesValidator
-from src.validators.bio_lookups import BioLookupsValidator
+# REMOVED: Don't import these at module level anymore
+# from src.validators.bio_rules import BioRulesValidator
+# from src.validators.bio_lookups import BioLookupsValidator
 from src.engine.policy_engine import PolicyEngine
 from src.agents.human_review_coordinator import HumanReviewCoordinator
 
-# ═══════════════════════════════════════════════════════════════════════════
-# MONITORING IMPORTS - ADDED FOR STEP 2
-# ═══════════════════════════════════════════════════════════════════════════
 from src.monitoring.logging_config import setup_logging, LogContext
 from src.monitoring.metrics import (
     ValidationTracker,
@@ -61,9 +61,6 @@ class ValidationOrchestrator:
         self.config = config or OrchestrationConfig()
         self.logger = logging.getLogger("orchestrator")
         
-        # ═══════════════════════════════════════════════════════════════════
-        # MONITORING SETUP - ADDED FOR STEP 2
-        # ═══════════════════════════════════════════════════════════════════
         # Initialize logging if not already done
         try:
             setup_logging(
@@ -73,7 +70,6 @@ class ValidationOrchestrator:
             )
             self.logger.info("Logging initialized by orchestrator")
         except Exception as e:
-            # Already initialized or error - continue
             self.logger.debug(f"Logging setup skipped: {e}")
     
         # Log API configuration on startup
@@ -94,11 +90,13 @@ class ValidationOrchestrator:
                 self.logger.warning(f"Rules config not found at {rules_config}, using defaults")
                 rules_config = None
         
+        # 🆕 Load and store ruleset metadata
+        self.ruleset_metadata = self._load_ruleset_metadata(rules_config)
+        
         self.rule_validator = RuleValidator(config=rules_config)
         
-        # Bio validators (no config needed)
-        self.bio_rules = BioRulesValidator()
-        self.bio_lookups = BioLookupsValidator()
+        # REMOVED: Don't create bio validators here anymore
+        # They will be created dynamically based on format_type
         
         # Policy Engine config
         policy_config = self.config.policy_config_path
@@ -135,6 +133,98 @@ class ValidationOrchestrator:
         self.logger.info(f"Ensembl API: {ensembl_url}")
         self.logger.info("=" * 60)
     
+    def _load_ruleset_metadata(self, rules_config_path: Optional[Path]) -> Dict[str, Any]:
+        """
+        🆕 Load ruleset version and metadata from validation_rules.yml
+        
+        Args:
+            rules_config_path: Path to validation rules YAML file
+            
+        Returns:
+            Dictionary with version, last_updated, hash, etc.
+        """
+        metadata = {
+            "version": "unknown",
+            "last_updated": "unknown",
+            "source": str(rules_config_path) if rules_config_path else "default",
+            "hash": None
+        }
+        
+        if not rules_config_path or not Path(rules_config_path).exists():
+            self.logger.warning("Rules config not found, using default metadata")
+            return metadata
+        
+        try:
+            config_path = Path(rules_config_path)
+            
+            # Read file content for hashing
+            content = config_path.read_text()
+            
+            # Compute SHA256 hash
+            metadata["hash"] = hashlib.sha256(content.encode()).hexdigest()[:16]
+            
+            # Parse YAML to extract version info
+            config = yaml.safe_load(content)
+            
+            if config and isinstance(config, dict):
+                metadata["version"] = config.get("version", "unknown")
+                metadata["last_updated"] = config.get("last_updated", "unknown")
+                
+                # Include changelog summary if available
+                if "changelog" in config and config["changelog"]:
+                    latest = config["changelog"][0] if config["changelog"] else {}
+                    metadata["latest_changes"] = latest.get("changes", [])
+            
+            self.logger.info(f"✅ Ruleset loaded: v{metadata['version']} (hash: {metadata['hash']})")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load ruleset metadata: {e}")
+        
+        return metadata
+    
+    def _select_validators(self, format_type: str) -> List[Any]:
+        """
+        Select appropriate validators based on data format.
+    
+        Args:
+            format_type: Type of biological data
+        
+        Returns:
+            List of validator instances
+        """
+        validators = []
+    
+        if format_type == "guide_rna":
+            from src.validators.bio_rules import BioRulesValidator
+            from src.validators.bio_lookups import BioLookupsValidator
+        
+            validators.extend([
+                BioRulesValidator(),
+                BioLookupsValidator()
+            ])
+    
+        elif format_type == "variant_annotation":
+            from src.validators.variant_validator import VariantValidator
+            validators.append(VariantValidator(reference_genome="GRCh38"))
+    
+        elif format_type == "sample_metadata":
+            from src.validators.sample_metadata_validator import SampleMetadataValidator
+            validators.append(SampleMetadataValidator(
+                require_ontologies=True,
+                strict_units=True
+            ))
+    
+        else:
+            self.logger.warning(f"Unknown format type: {format_type}, using default guide_rna validators")
+            from src.validators.bio_rules import BioRulesValidator
+            from src.validators.bio_lookups import BioLookupsValidator
+            validators.extend([
+                BioRulesValidator(),
+                BioLookupsValidator()
+            ])
+    
+        return validators
+    
     async def validate_dataset(
         self,
         dataset: Any,
@@ -155,18 +245,12 @@ class ValidationOrchestrator:
         # Generate unique validation_id
         validation_id = str(uuid.uuid4())
         
-        # ═══════════════════════════════════════════════════════════════════
-        # MONITORING: Add logging context - ADDED FOR STEP 2
-        # ═══════════════════════════════════════════════════════════════════
         with LogContext(
             validation_id=validation_id,
             dataset_id=metadata.dataset_id,
             format_type=metadata.format_type,
             record_count=metadata.record_count
         ):
-            # ═══════════════════════════════════════════════════════════════
-            # MONITORING: Track active validation - ADDED FOR STEP 2
-            # ═══════════════════════════════════════════════════════════════
             with ValidationTracker():
                 self.logger.info(f"Starting validation {validation_id} for dataset: {metadata.dataset_id}")
                 
@@ -182,9 +266,21 @@ class ValidationOrchestrator:
                     "execution_time_seconds": 0,
                     "short_circuited": False,
                     "decision_rationale": "",
+                    
+                    # 🆕 Ruleset versioning for reproducibility
+                    "ruleset_metadata": {
+                        "version": self.ruleset_metadata.get("version", "unknown"),
+                        "last_updated": self.ruleset_metadata.get("last_updated", "unknown"),
+                        "source": self.ruleset_metadata.get("source", "unknown"),
+                        "hash": self.ruleset_metadata.get("hash", "unknown"),
+                        "latest_changes": self.ruleset_metadata.get("latest_changes", [])
+                    },
+                    
                     "api_configuration": {
                         "ncbi_api_key_configured": bool(os.getenv('NCBI_API_KEY')),
-                        "ncbi_rate_limit": "10 req/sec" if os.getenv('NCBI_API_KEY') else "3 req/sec"
+                        "ncbi_rate_limit": "10 req/sec" if os.getenv('NCBI_API_KEY') else "3 req/sec",
+                        "cache_enabled": os.getenv('CACHE_ENABLED', 'true').lower() == 'true',
+                        "ensembl_fallback_enabled": os.getenv('ENSEMBL_ENABLED', 'true').lower() == 'true'
                     }
                 }
                 
@@ -212,11 +308,20 @@ class ValidationOrchestrator:
                         report["decision_rationale"] = "Critical rule violations"
                         return self._finalize_report(report, start_time)
                     
-                    # Stage 3 & 4: Biological Validation (Parallel if enabled)
-                    if self.config.enable_parallel_bio:
-                        bio_results = await self._execute_bio_validation_parallel(df, metadata, report)
+                    # ═══════════════════════════════════════════════════════════
+                    # FIXED: Get format-specific validators dynamically
+                    # ═══════════════════════════════════════════════════════════
+                    format_validators = self._select_validators(metadata.format_type)
+                    
+                    # Stage 3+: Run format-specific validators
+                    if self.config.enable_parallel_bio and len(format_validators) > 1:
+                        await self._execute_format_validation_parallel(
+                            df, metadata, format_validators, report
+                        )
                     else:
-                        bio_results = await self._execute_bio_validation_sequential(df, metadata, report)
+                        await self._execute_format_validation_sequential(
+                            df, metadata, format_validators, report
+                        )
                     
                     # Stage 5: Policy-based Decision
                     policy_start = time.time()
@@ -258,7 +363,6 @@ class ValidationOrchestrator:
                         )
                         report["stages"]["human_review"] = review_result
             
-                        # Only override if there's a REAL completed human review with a decision
                         if "decision" in review_result and review_result.get("status") == "completed":
                             review_decision = review_result["decision"]
                             if isinstance(review_decision, Decision):
@@ -279,15 +383,12 @@ class ValidationOrchestrator:
                     report["error"] = str(e)
                     report["decision_rationale"] = f"System error: {str(e)}"
                 
-                # ═══════════════════════════════════════════════════════════
-                # MONITORING: Record validation request metric - ADDED
-                # ═══════════════════════════════════════════════════════════
+                # Record validation metrics
                 validation_requests_total.labels(
                     dataset_type=metadata.format_type,
                     decision=report.get("final_decision", "error")
                 ).inc()
                 
-                # Record overall validation duration
                 total_duration = time.time() - start_time
                 validation_duration_seconds.labels(
                     agent="Orchestrator",
@@ -341,68 +442,143 @@ class ValidationOrchestrator:
         report["stages"]["rules"] = result_dict
         return result
     
-    async def _execute_bio_validation_parallel(
+    async def _execute_format_validation_parallel(
         self,
         df: pd.DataFrame,
         metadata: DatasetMetadata,
+        validators: List[Any],
         report: Dict
-    ) -> Dict[str, ValidationResult]:
-        """Execute biological validations in parallel"""
-        self.logger.info("Executing biological validations (parallel)")
+    ) -> None:
+        """
+        Execute format-specific validators in parallel.
+    
+        FIXED: Properly handles different validator signatures and async/sync validators.
+        """
+        self.logger.info(f"Executing {len(validators)} format-specific validators (parallel)")
+    
+        # Create tasks with proper signatures for each validator type
+        tasks = []
+        validator_info = []  # Track which validator each task belongs to
+    
+        for validator in validators:
+            validator_class_name = validator.__class__.__name__
         
-        # Run local and external validations concurrently
-        bio_rules_task = asyncio.create_task(
-            asyncio.to_thread(self.bio_rules.validate, df, metadata.experiment_type or 'guide_rna')
-        )
-        bio_lookups_task = self.bio_lookups.validate(df, 'gene_symbols')
+            # Store validator info for later processing
+            validator_info.append({
+                'validator': validator,
+                'class_name': validator_class_name,
+                'stage_name': validator_class_name.lower().replace('validator', '')
+            })
         
-        results = await asyncio.gather(bio_rules_task, bio_lookups_task, return_exceptions=True)
-        
+            # Determine the right way to call each validator based on its type
+            if 'BioLookups' in validator_class_name:
+                # BioLookupsValidator: async, expects (df, lookup_type)
+                self.logger.debug(f"Setting up {validator_class_name} (async)")
+                tasks.append(validator.validate(df, 'gene_symbols'))
+            
+            elif 'BioRules' in validator_class_name:
+                # BioRulesValidator: sync, expects (df, data_type)
+                data_type = metadata.experiment_type or 'guide_rna'
+                self.logger.debug(f"Setting up {validator_class_name} (sync, data_type={data_type})")
+                tasks.append(asyncio.to_thread(validator.validate, df, data_type))
+            
+            elif 'Variant' in validator_class_name:
+                # VariantValidator: sync, expects (df)
+                self.logger.debug(f"Setting up {validator_class_name} (sync)")
+                tasks.append(asyncio.to_thread(validator.validate, df))
+            
+            elif 'SampleMetadata' in validator_class_name:
+                # SampleMetadataValidator: sync, expects (df)
+                self.logger.debug(f"Setting up {validator_class_name} (sync)")
+                tasks.append(asyncio.to_thread(validator.validate, df))
+            
+            else:
+                # Unknown validator type - try generic approach
+                self.logger.warning(f"Unknown validator type: {validator_class_name}, using generic call")
+                if asyncio.iscoroutinefunction(validator.validate):
+                    tasks.append(validator.validate(df))
+                else:
+                    tasks.append(asyncio.to_thread(validator.validate, df))
+    
+        # Run all validators concurrently
+        self.logger.debug(f"Running {len(tasks)} validation tasks in parallel")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    
         # Process results
-        bio_rules_result = results[0] if not isinstance(results[0], Exception) else self._create_error_result("BioRules", results[0])
-        bio_lookups_result = results[1] if not isinstance(results[1], Exception) else self._create_error_result("BioLookups", results[1])
+        for info, result in zip(validator_info, results):
+            validator_name = info['class_name']
+            stage_name = info['stage_name']
         
-        # Serialize results
-        bio_rules_dict = self._serialize_result(bio_rules_result)
-        bio_lookups_dict = self._serialize_result(bio_lookups_result)
+            # Add bio_ prefix for biological validators
+            if 'bio' in stage_name.lower():
+                stage_name = f"bio_{stage_name}" if not stage_name.startswith('bio_') else stage_name
         
-        report["stages"]["bio_rules"] = bio_rules_dict
-        report["stages"]["bio_lookups"] = bio_lookups_dict
-        
-        return {
-            "bio_rules": bio_rules_result,
-            "bio_lookups": bio_lookups_result
-        }
+            if isinstance(result, Exception):
+                self.logger.error(f"Validator {validator_name} failed: {result}", exc_info=True)
+                report["stages"][stage_name] = self._create_error_result(
+                    validator_name, 
+                    result
+                )
+            else:
+                self.logger.debug(f"Validator {validator_name} completed successfully")
+                report["stages"][stage_name] = self._serialize_result(result)
     
-    async def _execute_bio_validation_sequential(
+    async def _execute_format_validation_sequential(
         self,
         df: pd.DataFrame,
         metadata: DatasetMetadata,
+        validators: List[Any],
         report: Dict
-    ) -> Dict[str, ValidationResult]:
-        """Execute biological validations sequentially"""
-        self.logger.info("Executing biological validations (sequential)")
+    ) -> None:
+        """
+        Execute format-specific validators sequentially.
         
-        # Local checks first (fast)
-        bio_rules_result = self.bio_rules.validate(df, metadata.experiment_type or 'guide_rna')
-        report["stages"]["bio_rules"] = self._serialize_result(bio_rules_result)
+        FIXED: Now uses dynamic validators instead of hardcoded self.bio_rules/self.bio_lookups
+        """
+        self.logger.info(f"Executing {len(validators)} format-specific validators (sequential)")
         
-        # External lookups second (slower)
-        bio_lookups_result = await self.bio_lookups.validate(df, 'gene_symbols')
-        report["stages"]["bio_lookups"] = self._serialize_result(bio_lookups_result)
-        
-        return {
-            "bio_rules": bio_rules_result,
-            "bio_lookups": bio_lookups_result
-        }
+        for validator in validators:
+            validator_name = validator.__class__.__name__
+            stage_name = validator_name.lower().replace('validator', '')
+            
+            try:
+                # Determine if this is an async validator
+                if hasattr(validator, 'validate') and asyncio.iscoroutinefunction(validator.validate):
+                    # Async validator (e.g., BioLookupsValidator)
+                    result = await validator.validate(df, 'gene_symbols')
+                else:
+                    # Sync validator (e.g., VariantValidator, SampleMetadataValidator)
+                    result = validator.validate(df)
+                
+                report["stages"][stage_name] = self._serialize_result(result)
+                
+            except Exception as e:
+                self.logger.error(f"Validator {validator_name} failed: {e}")
+                report["stages"][stage_name] = self._create_error_result(validator_name, e)
     
-    def _serialize_result(self, result: Union[ValidationResult, Dict]) -> Dict:
+    def _serialize_result(self, result: Union[ValidationResult, Dict, List]) -> Dict:
         """Serialize ValidationResult to dict with proper enum handling"""
         if isinstance(result, ValidationResult):
             result_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
             if 'severity' in result_dict and hasattr(result_dict['severity'], 'value'):
                 result_dict['severity'] = result_dict['severity'].value
             return result_dict
+        elif isinstance(result, list):
+            # Handle list of issues (from some validators)
+            return {
+                "validator_name": "CustomValidator",
+                "passed": len(result) == 0,
+                "severity": "error" if any(
+                    getattr(issue, 'severity', 'info') in ['error', 'critical'] 
+                    for issue in result
+                ) else "info",
+                "issues": [
+                    issue.model_dump() if hasattr(issue, 'model_dump') else issue 
+                    for issue in result
+                ],
+                "execution_time_ms": 0,
+                "records_processed": 0
+            }
         return result
     
     def _prepare_dataframe(self, dataset: Any, format_type: str) -> pd.DataFrame:
@@ -447,7 +623,7 @@ class ValidationOrchestrator:
         )
         
         return report
-    
+
     def _create_error_result(self, validator_name: str, error: Exception) -> Dict:
         """Create error result for failed validator"""
         return {

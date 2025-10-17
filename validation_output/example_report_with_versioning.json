@@ -1,0 +1,123 @@
+{
+  "validation_id": "db960359-08cf-4e22-a8de-99de530ec373",
+  "dataset_id": "test_versioning_001",
+  "start_time": 1760726734.402674,
+  "metadata": {
+    "dataset_id": "test_versioning_001",
+    "format_type": "guide_rna",
+    "record_count": 2,
+    "source": null,
+    "organism": "human",
+    "experiment_type": null,
+    "additional_metadata": {}
+  },
+  "stages": {
+    "schema": {
+      "validator_name": "SchemaValidator",
+      "timestamp": "2025-10-17 18:45:34.406278",
+      "passed": true,
+      "severity": "info",
+      "issues": [],
+      "metadata": {
+        "schema_type": "guide_rna",
+        "strict_mode": true
+      },
+      "execution_time_ms": 3.2279491424560547,
+      "records_processed": 2
+    },
+    "rules": {
+      "validator_name": "RuleValidator",
+      "timestamp": "2025-10-17 18:45:34.409927",
+      "passed": true,
+      "severity": "info",
+      "issues": [],
+      "metadata": {
+        "total_rules_applied": 4
+      },
+      "execution_time_ms": 3.202199935913086,
+      "records_processed": 2
+    },
+    "bio_biorules": {
+      "validator_name": "BioRules",
+      "timestamp": "2025-10-17 18:45:34.509932",
+      "passed": true,
+      "severity": "info",
+      "issues": [],
+      "metadata": {
+        "data_type": "guide_rna"
+      },
+      "execution_time_ms": 4.486799240112305,
+      "records_processed": 2
+    },
+    "bio_biolookups": {
+      "validator_name": "BioLookups",
+      "timestamp": "2025-10-17 18:45:34.513149",
+      "passed": true,
+      "severity": "info",
+      "issues": [],
+      "metadata": {
+        "validation_type": "gene_symbols",
+        "api_key_used": true,
+        "rate_limit": "10 req/sec",
+        "api_calls_made": 0,
+        "genes_validated": 2,
+        "batch_size": 50,
+        "cache_enabled": true,
+        "cache_hits": 2,
+        "cache_misses": 0,
+        "cache_hit_rate": "100.0%",
+        "api_call_reduction": "100%",
+        "ncbi_successes": 0,
+        "ensembl_fallbacks": 0,
+        "degraded_mode": 0,
+        "provider_reliability": "0%",
+        "optimization": "cache + batching + fallback"
+      },
+      "execution_time_ms": 5.686044692993164,
+      "records_processed": 2
+    },
+    "policy": {
+      "validator_name": "PolicyEngine",
+      "passed": true,
+      "severity": "info",
+      "issues": [],
+      "execution_time_ms": 0.08606910705566406,
+      "records_processed": 2,
+      "metadata": {
+        "decision": "accepted",
+        "rationale": "Conditional accept: Manual review recommended",
+        "requires_review": false,
+        "severity_counts": {
+          "critical": 0,
+          "error": 0,
+          "warning": 0,
+          "info": 0
+        }
+      }
+    }
+  },
+  "final_decision": "accepted",
+  "requires_human_review": false,
+  "execution_time_seconds": 0.11075711250305176,
+  "short_circuited": false,
+  "decision_rationale": "Conditional accept: Manual review recommended",
+  "ruleset_metadata": {
+    "version": "1.2.0",
+    "last_updated": "2025-10-17",
+    "source": "config/validation_rules.yml",
+    "hash": "14fd764328912228",
+    "latest_changes": [
+      "Added gene symbol caching support",
+      "Added Ensembl fallback provider",
+      "Added variant annotation validation rules",
+      "Added sample metadata validation rules"
+    ]
+  },
+  "api_configuration": {
+    "ncbi_api_key_configured": true,
+    "ncbi_rate_limit": "10 req/sec",
+    "cache_enabled": true,
+    "ensembl_fallback_enabled": true
+  },
+  "end_time": 1760726734.513431
+}

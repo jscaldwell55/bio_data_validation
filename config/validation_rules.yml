@@ -1,6 +1,27 @@
 # config/validation_rules.yml
 # Validation rules configuration for biological data validation
 
+# 🆕 RULESET VERSION - Tracked in all validation reports
+version: "1.2.0"
+last_updated: "2025-10-17"
+changelog:
+  - version: "1.2.0"
+    date: "2025-10-17"
+    changes:
+      - "Added gene symbol caching support"
+      - "Added Ensembl fallback provider"
+      - "Added variant annotation validation rules"
+      - "Added sample metadata validation rules"
+  - version: "1.1.0"
+    date: "2025-10-09"
+    changes:
+      - "Added custom rule support"
+      - "Enhanced bias detection"
+  - version: "1.0.0"
+    date: "2025-10-01"
+    changes:
+      - "Initial ruleset"
+
 rules:
   consistency:
     # Required columns - empty by default for flexibility
@@ -146,3 +167,78 @@ rules:
 #       - gc_content
 #       - on_target_score
 # =============================================================================
+
+# =============================================================================
+# Variant Annotation Validation Rules
+# =============================================================================
+variant_validation:
+  reference_genome: "GRCh38"  # or GRCh37, hg19, hg38
+  
+  required_columns:
+    - chromosome
+    - position
+    - ref_allele
+    - alt_allele
+  
+  optional_columns:
+    - gene_symbol
+    - consequence
+    - hgvs_c
+    - hgvs_p
+    - gnomad_af
+    - clinvar_significance
+  
+  chromosome_format:
+    allow_chr_prefix: true
+    standardize_to: "with_prefix"  # "with_prefix" or "without_prefix"
+  
+  allele_frequency_thresholds:
+    common_variant: 0.01  # >1% = common
+    rare_variant: 0.001   # <0.1% = rare
+    
+  consequence_terms:
+    use_vep_standard: true
+    custom_terms: []
+
+# =============================================================================
+# Sample Metadata Validation Rules
+# =============================================================================
+sample_metadata_validation:
+  required_fields:
+    - sample_id
+    - organism
+    - tissue_type
+    - collection_date
+  
+  recommended_fields:
+    - cell_type
+    - treatment
+    - time_point
+    - replicate_id
+    - batch_id
+    - experimenter
+  
+  ontology_validation:
+    require_ontologies: true  # Require ontology IDs vs free text
+    tissue_ontology: "UBERON"
+    cell_ontology: "CL"
+    experiment_ontology: "EFO"
+    chemical_ontology: "CHEBI"
+  
+  unit_validation:
+    strict_units: true  # Require standardized units
+    concentration_units: ["M", "mM", "uM", "nM"]
+    time_units: ["s", "m", "h", "d"]
+    temperature_units: ["C", "F", "K"]
+    volume_units: ["L", "mL", "uL"]
+  
+  batch_effect_detection:
+    check_batch_imbalance: true
+    max_batch_size_ratio: 5.0  # Flag if batch sizes differ >5x
+    check_confounding: true  # Check if batch confounded with condition
+  
+  date_format:
+    require_iso8601: true  # YYYY-MM-DD format
+  
+  missing_data:
+    max_missing_per_field: 0.3  # Warn if >30% missing

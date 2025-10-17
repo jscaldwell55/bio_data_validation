@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     Application configuration with environment variable support.
     
     All settings can be overridden via environment variables or .env file.
-    Example: APP_NAME="Custom Name" in .env
     """
     
     # =============================================================================
@@ -27,10 +26,7 @@ class Settings(BaseSettings):
     # =============================================================================
     # Database Settings
     # =============================================================================
-    # FIXED: Provide sensible default for development
     DATABASE_URL: str = "sqlite:///./bio_validation.db"
-    # For production, override with:
-    # DATABASE_URL=postgresql://user:pass@localhost/bio_validation
     
     # =============================================================================
     # External API Settings
@@ -38,12 +34,7 @@ class Settings(BaseSettings):
     # NCBI E-utilities
     NCBI_API_KEY: Optional[str] = None
     NCBI_BASE_URL: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-    NCBI_BATCH_SIZE: int = 50  # Reduced from 100 for optimal performance
-    
-    # FIXED: Rate limit depends on API key presence
-    # With API key: 10 req/sec = 0.1 second delay
-    # Without API key: 3 req/sec = 0.34 second delay
-    # This will be dynamically set in BioLookupsValidator based on key presence
+    NCBI_BATCH_SIZE: int = 50
     NCBI_RATE_LIMIT_DELAY: float = 0.34  # Default (no API key)
     NCBI_MAX_RETRIES: int = 3
     NCBI_TIMEOUT: int = 30  # seconds
@@ -51,18 +42,24 @@ class Settings(BaseSettings):
     # Ensembl REST API
     ENSEMBL_API_URL: str = "https://rest.ensembl.org"
     ENSEMBL_BATCH_SIZE: int = 50
-    ENSEMBL_RATE_LIMIT_DELAY: float = 0.1
+    ENSEMBL_RATE_LIMIT_DELAY: float = 0.067  # 15 req/sec
     ENSEMBL_TIMEOUT: int = 30  # seconds
+    ENSEMBL_ENABLED: bool = True  # 🆕 Enable Ensembl fallback
+    
+    # =============================================================================
+    # 🆕 Caching Settings
+    # =============================================================================
+    CACHE_ENABLED: bool = True  # Enable gene symbol caching
+    CACHE_PATH: str = "validation_cache.db"  # SQLite cache file
+    CACHE_TTL_HOURS: int = 168  # 7 days (genes rarely change)
+    CACHE_AUTO_WARM: bool = True  # Pre-populate common genes
     
     # =============================================================================
     # MLOps Settings
     # =============================================================================
-    # MLflow
-    MLFLOW_TRACKING_URI: str = "sqlite:///./mlruns.db"  # FIXED: Default for dev
-    # For production, override with:
-    # MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    MLFLOW_TRACKING_URI: str = "sqlite:///./mlruns.db"
     MLFLOW_EXPERIMENT_NAME: str = "bio-validation"
-    MLFLOW_ENABLE_TRACKING: bool = False  # Disable by default
+    MLFLOW_ENABLE_TRACKING: bool = False
     
     # Data Version Control (DVC)
     DVC_REMOTE_URL: Optional[str] = None
@@ -72,21 +69,21 @@ class Settings(BaseSettings):
     # Monitoring & Observability
     # =============================================================================
     # Logging
-    LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-    LOG_FORMAT: str = "json"  # json or text
-    LOG_FILE: Optional[str] = None  # None = stdout only
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "json"
+    LOG_FILE: Optional[str] = None
     
     # Prometheus metrics
-    PROMETHEUS_ENABLED: bool = False  # Disabled by default for dev
+    PROMETHEUS_ENABLED: bool = False
     PROMETHEUS_PORT: int = 9090
     PROMETHEUS_PATH: str = "/metrics"
     
     # =============================================================================
     # Validation Orchestrator Settings
     # =============================================================================
-    ORCHESTRATOR_TIMEOUT_SECONDS: int = 300  # 5 minutes
-    ENABLE_SHORT_CIRCUIT: bool = True  # Stop on critical failures
-    ENABLE_PARALLEL_BIO: bool = True  # Parallel bio validation
+    ORCHESTRATOR_TIMEOUT_SECONDS: int = 300
+    ENABLE_SHORT_CIRCUIT: bool = True
+    ENABLE_PARALLEL_BIO: bool = True
     
     # =============================================================================
     # Policy & Rules Configuration
@@ -95,12 +92,12 @@ class Settings(BaseSettings):
     VALIDATION_RULES_PATH: str = "config/validation_rules.yml"
     
     # =============================================================================
-    # API Server Settings (if using FastAPI)
+    # API Server Settings
     # =============================================================================
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     API_WORKERS: int = 4
-    API_RELOAD: bool = False  # Auto-reload on code changes (dev only)
+    API_RELOAD: bool = False
     
     # CORS settings
     CORS_ENABLED: bool = True
@@ -125,15 +122,13 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
-        
-        # Allow extra fields from environment
         extra = "ignore"
     
     def __init__(self, **kwargs):
         """Initialize settings with dynamic rate limit adjustment"""
         super().__init__(**kwargs)
         
-        # ADDED: Dynamically adjust NCBI rate limit based on API key
+        # Dynamically adjust NCBI rate limit based on API key
         if self.NCBI_API_KEY:
             self.NCBI_RATE_LIMIT_DELAY = 0.1  # 10 req/sec with key
         else:
@@ -141,17 +136,17 @@ class Settings(BaseSettings):
     
     @property
     def ncbi_requests_per_second(self) -> int:
-        """Calculate NCBI requests per second based on current rate limit"""
+        """Calculate NCBI requests per second"""
         return int(1.0 / self.NCBI_RATE_LIMIT_DELAY)
     
     @property
     def is_production(self) -> bool:
-        """Check if running in production environment"""
+        """Check if running in production"""
         return self.ENVIRONMENT.lower() == "production"
     
     @property
     def is_development(self) -> bool:
-        """Check if running in development environment"""
+        """Check if running in development"""
         return self.ENVIRONMENT.lower() == "development"
     
     def get_database_path(self) -> Optional[Path]:
@@ -159,35 +154,17 @@ class Settings(BaseSettings):
         if self.DATABASE_URL.startswith("sqlite:///"):
             return Path(self.DATABASE_URL.replace("sqlite:///", ""))
         return None
+    
+    # 🆕 Cache-related helper methods
+    def get_cache_path(self) -> Path:
+        """Get cache database path"""
+        return Path(self.CACHE_PATH)
+    
+    @property
+    def cache_enabled_with_fallback(self) -> bool:
+        """Check if caching and fallback are both enabled"""
+        return self.CACHE_ENABLED and self.ENSEMBL_ENABLED
 
 
 # Global settings instance
 settings = Settings()
-
-
-# =============================================================================
-# Usage Examples
-# =============================================================================
-# 
-# In your code:
-# --------------
-# from config.base_config import settings
-# 
-# # Access settings
-# print(settings.NCBI_API_KEY)
-# print(settings.DATABASE_URL)
-# 
-# # Check environment
-# if settings.is_production:
-#     # Production-specific logic
-#     pass
-# 
-# In .env file:
-# -------------
-# # Override any setting
-# ENVIRONMENT=production
-# DATABASE_URL=postgresql://user:pass@localhost/bio_validation
-# NCBI_API_KEY=your_actual_api_key_here
-# LOG_LEVEL=WARNING
-# MLFLOW_TRACKING_URI=http://mlflow-server:5000
-# =============================================================================
