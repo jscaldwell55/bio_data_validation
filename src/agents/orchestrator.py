@@ -16,9 +16,6 @@ from dotenv import load_dotenv
 from src.schemas.base_schemas import ValidationResult, ValidationSeverity, DatasetMetadata, Decision
 from src.validators.schema_validator import validate_schema, SchemaValidator
 from src.validators.rule_validator import RuleValidator
-# REMOVED: Don't import these at module level anymore
-# from src.validators.bio_rules import BioRulesValidator
-# from src.validators.bio_lookups import BioLookupsValidator
 from src.engine.policy_engine import PolicyEngine
 from src.agents.human_review_coordinator import HumanReviewCoordinator
 
@@ -90,13 +87,10 @@ class ValidationOrchestrator:
                 self.logger.warning(f"Rules config not found at {rules_config}, using defaults")
                 rules_config = None
         
-        # 🆕 Load and store ruleset metadata
+        # Load and store ruleset metadata
         self.ruleset_metadata = self._load_ruleset_metadata(rules_config)
         
         self.rule_validator = RuleValidator(config=rules_config)
-        
-        # REMOVED: Don't create bio validators here anymore
-        # They will be created dynamically based on format_type
         
         # Policy Engine config
         policy_config = self.config.policy_config_path
@@ -135,7 +129,7 @@ class ValidationOrchestrator:
     
     def _load_ruleset_metadata(self, rules_config_path: Optional[Path]) -> Dict[str, Any]:
         """
-        🆕 Load ruleset version and metadata from validation_rules.yml
+        Load ruleset version and metadata from validation_rules.yml
         
         Args:
             rules_config_path: Path to validation rules YAML file
@@ -182,12 +176,62 @@ class ValidationOrchestrator:
         
         return metadata
     
-    def _select_validators(self, format_type: str) -> List[Any]:
+    def suggest_format(self, df: pd.DataFrame) -> str:
+        """
+        Suggest the best format type for this DataFrame.
+        
+        Args:
+            df: DataFrame to analyze
+            
+        Returns:
+            Suggested format_type string
+            
+        Example:
+            >>> orchestrator = ValidationOrchestrator()
+            >>> df = pd.read_csv('my_rnaseq_data.csv', index_col=0)
+            >>> suggested = orchestrator.suggest_format(df)
+            >>> print(f"Detected: {suggested}")
+            Detected: generic_matrix
+        """
+        # Check for GUIDE_RNA format
+        guide_rna_cols = {'sequence', 'pam_sequence', 'target_gene'}
+        if guide_rna_cols.issubset(set(df.columns)):
+            self.logger.info("Detected format: guide_rna (has sequence, pam_sequence, target_gene)")
+            return "guide_rna"
+        
+        # Check for VARIANT_ANNOTATION format
+        variant_cols = {'chromosome', 'position', 'ref_allele', 'alt_allele'}
+        if variant_cols.issubset(set(df.columns)):
+            self.logger.info("Detected format: variant_annotation (has chromosome, position, alleles)")
+            return "variant_annotation"
+        
+        # Check for SAMPLE_METADATA format
+        sample_cols = {'sample_id', 'organism'}
+        if sample_cols.issubset(set(df.columns)):
+            self.logger.info("Detected format: sample_metadata (has sample_id, organism)")
+            return "sample_metadata"
+        
+        # Check if it looks like a matrix (numeric data with gene-like row names)
+        if df.shape[0] > 1 and df.shape[1] > 1:
+            # Check if most columns are numeric
+            numeric_cols = df.select_dtypes(include=['number']).columns
+            if len(numeric_cols) / len(df.columns) > 0.5:
+                # Check if index looks like gene names
+                if isinstance(df.index[0], str) and 2 <= len(str(df.index[0])) <= 20:
+                    self.logger.info("Detected format: generic_matrix (numeric data with gene-like index)")
+                    return "generic_matrix"
+        
+        # Default fallback
+        self.logger.info("Format unclear, defaulting to: generic_matrix")
+        return "generic_matrix"
+    
+    def _select_validators(self, format_type: str, metadata: DatasetMetadata) -> List[Any]:
         """
         Select appropriate validators based on data format.
     
         Args:
             format_type: Type of biological data
+            metadata: Dataset metadata (for organism, experiment_type, etc.)
         
         Returns:
             List of validator instances
@@ -202,10 +246,13 @@ class ValidationOrchestrator:
                 BioRulesValidator(),
                 BioLookupsValidator()
             ])
+            self.logger.info("Selected validators: BioRulesValidator, BioLookupsValidator")
     
         elif format_type == "variant_annotation":
             from src.validators.variant_validator import VariantValidator
-            validators.append(VariantValidator(reference_genome="GRCh38"))
+            reference_genome = metadata.reference_genome or "GRCh38"
+            validators.append(VariantValidator(reference_genome=reference_genome))
+            self.logger.info(f"Selected validators: VariantValidator (genome: {reference_genome})")
     
         elif format_type == "sample_metadata":
             from src.validators.sample_metadata_validator import SampleMetadataValidator
@@ -213,15 +260,27 @@ class ValidationOrchestrator:
                 require_ontologies=True,
                 strict_units=True
             ))
+            self.logger.info("Selected validators: SampleMetadataValidator")
+        
+        elif format_type == "generic_matrix":
+            # NEW: Generic matrix validator for any gene-by-sample data
+            from src.validators.matrix_validator import MatrixValidator
+            
+            # Configure based on experiment type
+            experiment_type = metadata.experiment_type or ""
+            allow_negative = "crispr" in experiment_type.lower() or "screen" in experiment_type.lower()
+            
+            validators.append(MatrixValidator(
+                organism=metadata.organism or "human",
+                validate_genes=True,
+                allow_negative=allow_negative
+            ))
+            self.logger.info(f"Selected validators: MatrixValidator (organism: {metadata.organism}, allow_negative: {allow_negative})")
     
         else:
-            self.logger.warning(f"Unknown format type: {format_type}, using default guide_rna validators")
-            from src.validators.bio_rules import BioRulesValidator
-            from src.validators.bio_lookups import BioLookupsValidator
-            validators.extend([
-                BioRulesValidator(),
-                BioLookupsValidator()
-            ])
+            self.logger.warning(f"Unknown format type: {format_type}, defaulting to generic_matrix")
+            from src.validators.matrix_validator import MatrixValidator
+            validators.append(MatrixValidator(organism=metadata.organism or "human"))
     
         return validators
     
@@ -234,11 +293,24 @@ class ValidationOrchestrator:
         Main orchestration method - coordinates all validation with short-circuiting.
         
         Args:
-            dataset: The data to validate
+            dataset: The data to validate (DataFrame, list, dict, or file path)
             metadata: Metadata about the dataset
             
         Returns:
-            Comprehensive validation report
+            Comprehensive validation report with decision, issues, and metadata
+            
+        Example:
+            >>> orchestrator = ValidationOrchestrator()
+            >>> df = pd.read_csv('my_data.csv')
+            >>> metadata = DatasetMetadata(
+            ...     dataset_id="exp001",
+            ...     format_type="generic_matrix",
+            ...     record_count=len(df),
+            ...     organism="human"
+            ... )
+            >>> report = await orchestrator.validate_dataset(df, metadata)
+            >>> print(report['final_decision'])
+            accepted
         """
         start_time = time.time()
         
@@ -267,7 +339,7 @@ class ValidationOrchestrator:
                     "short_circuited": False,
                     "decision_rationale": "",
                     
-                    # 🆕 Ruleset versioning for reproducibility
+                    # Ruleset versioning for reproducibility
                     "ruleset_metadata": {
                         "version": self.ruleset_metadata.get("version", "unknown"),
                         "last_updated": self.ruleset_metadata.get("last_updated", "unknown"),
@@ -308,12 +380,10 @@ class ValidationOrchestrator:
                         report["decision_rationale"] = "Critical rule violations"
                         return self._finalize_report(report, start_time)
                     
-                    # ═══════════════════════════════════════════════════════════
-                    # FIXED: Get format-specific validators dynamically
-                    # ═══════════════════════════════════════════════════════════
-                    format_validators = self._select_validators(metadata.format_type)
+                    # Stage 3+: Get format-specific validators dynamically
+                    format_validators = self._select_validators(metadata.format_type, metadata)
                     
-                    # Stage 3+: Run format-specific validators
+                    # Run format-specific validators
                     if self.config.enable_parallel_bio and len(format_validators) > 1:
                         await self._execute_format_validation_parallel(
                             df, metadata, format_validators, report
@@ -449,52 +519,47 @@ class ValidationOrchestrator:
         validators: List[Any],
         report: Dict
     ) -> None:
-        """
-        Execute format-specific validators in parallel.
-    
-        FIXED: Properly handles different validator signatures and async/sync validators.
-        """
+        """Execute format-specific validators in parallel."""
         self.logger.info(f"Executing {len(validators)} format-specific validators (parallel)")
     
-        # Create tasks with proper signatures for each validator type
         tasks = []
-        validator_info = []  # Track which validator each task belongs to
+        validator_info = []
     
         for validator in validators:
             validator_class_name = validator.__class__.__name__
         
-            # Store validator info for later processing
             validator_info.append({
                 'validator': validator,
                 'class_name': validator_class_name,
                 'stage_name': validator_class_name.lower().replace('validator', '')
             })
         
-            # Determine the right way to call each validator based on its type
-            if 'BioLookups' in validator_class_name:
-                # BioLookupsValidator: async, expects (df, lookup_type)
-                self.logger.debug(f"Setting up {validator_class_name} (async)")
+            # Determine the right way to call each validator
+            if 'Matrix' in validator_class_name:
+                # MatrixValidator: async, expects (df, experiment_type)
+                experiment_type = metadata.experiment_type or metadata.format_type
+                self.logger.debug(f"Setting up MatrixValidator (async, experiment_type: {experiment_type})")
+                tasks.append(validator.validate(df, experiment_type))
+            
+            elif 'BioLookups' in validator_class_name:
+                self.logger.debug(f"Setting up BioLookupsValidator (async)")
                 tasks.append(validator.validate(df, 'gene_symbols'))
             
             elif 'BioRules' in validator_class_name:
-                # BioRulesValidator: sync, expects (df, data_type)
                 data_type = metadata.experiment_type or 'guide_rna'
-                self.logger.debug(f"Setting up {validator_class_name} (sync, data_type={data_type})")
+                self.logger.debug(f"Setting up BioRulesValidator (sync, data_type: {data_type})")
                 tasks.append(asyncio.to_thread(validator.validate, df, data_type))
             
             elif 'Variant' in validator_class_name:
-                # VariantValidator: sync, expects (df)
-                self.logger.debug(f"Setting up {validator_class_name} (sync)")
+                self.logger.debug(f"Setting up VariantValidator (sync)")
                 tasks.append(asyncio.to_thread(validator.validate, df))
             
             elif 'SampleMetadata' in validator_class_name:
-                # SampleMetadataValidator: sync, expects (df)
-                self.logger.debug(f"Setting up {validator_class_name} (sync)")
+                self.logger.debug(f"Setting up SampleMetadataValidator (sync)")
                 tasks.append(asyncio.to_thread(validator.validate, df))
             
             else:
-                # Unknown validator type - try generic approach
-                self.logger.warning(f"Unknown validator type: {validator_class_name}, using generic call")
+                self.logger.warning(f"Unknown validator type: {validator_class_name}, using generic approach")
                 if asyncio.iscoroutinefunction(validator.validate):
                     tasks.append(validator.validate(df))
                 else:
@@ -509,16 +574,15 @@ class ValidationOrchestrator:
             validator_name = info['class_name']
             stage_name = info['stage_name']
         
-            # Add bio_ prefix for biological validators
-            if 'bio' in stage_name.lower():
-                stage_name = f"bio_{stage_name}" if not stage_name.startswith('bio_') else stage_name
+            # Add appropriate prefix
+            if 'bio' in stage_name.lower() and not stage_name.startswith('bio_'):
+                stage_name = f"bio_{stage_name}"
+            elif 'matrix' in stage_name.lower() and not stage_name.startswith('matrix'):
+                stage_name = "matrix"
         
             if isinstance(result, Exception):
                 self.logger.error(f"Validator {validator_name} failed: {result}", exc_info=True)
-                report["stages"][stage_name] = self._create_error_result(
-                    validator_name, 
-                    result
-                )
+                report["stages"][stage_name] = self._create_error_result(validator_name, result)
             else:
                 self.logger.debug(f"Validator {validator_name} completed successfully")
                 report["stages"][stage_name] = self._serialize_result(result)
@@ -530,24 +594,27 @@ class ValidationOrchestrator:
         validators: List[Any],
         report: Dict
     ) -> None:
-        """
-        Execute format-specific validators sequentially.
-        
-        FIXED: Now uses dynamic validators instead of hardcoded self.bio_rules/self.bio_lookups
-        """
+        """Execute format-specific validators sequentially."""
         self.logger.info(f"Executing {len(validators)} format-specific validators (sequential)")
         
         for validator in validators:
             validator_name = validator.__class__.__name__
             stage_name = validator_name.lower().replace('validator', '')
             
+            # Add appropriate prefix
+            if 'matrix' in stage_name:
+                stage_name = "matrix"
+            
             try:
-                # Determine if this is an async validator
                 if hasattr(validator, 'validate') and asyncio.iscoroutinefunction(validator.validate):
-                    # Async validator (e.g., BioLookupsValidator)
-                    result = await validator.validate(df, 'gene_symbols')
+                    # Async validator
+                    if 'Matrix' in validator_name:
+                        experiment_type = metadata.experiment_type or metadata.format_type
+                        result = await validator.validate(df, experiment_type)
+                    else:
+                        result = await validator.validate(df, 'gene_symbols')
                 else:
-                    # Sync validator (e.g., VariantValidator, SampleMetadataValidator)
+                    # Sync validator
                     result = validator.validate(df)
                 
                 report["stages"][stage_name] = self._serialize_result(result)
@@ -564,7 +631,6 @@ class ValidationOrchestrator:
                 result_dict['severity'] = result_dict['severity'].value
             return result_dict
         elif isinstance(result, list):
-            # Handle list of issues (from some validators)
             return {
                 "validator_name": "CustomValidator",
                 "passed": len(result) == 0,
@@ -590,7 +656,6 @@ class ValidationOrchestrator:
         elif isinstance(dataset, dict):
             return pd.DataFrame([dataset])
         elif isinstance(dataset, str) and format_type == 'fasta':
-            # Parse FASTA and convert to DataFrame
             from Bio import SeqIO
             from io import StringIO
             records = list(SeqIO.parse(StringIO(dataset), "fasta"))
@@ -610,7 +675,6 @@ class ValidationOrchestrator:
         report["execution_time_seconds"] = time.time() - start_time
         report["end_time"] = time.time()
         
-        # Ensure final_decision is lowercase string
         if report["final_decision"]:
             decision = report["final_decision"]
             if isinstance(decision, Decision):

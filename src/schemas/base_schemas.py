@@ -229,7 +229,12 @@ class ValidationStatus(SerializableEnum):
 
 
 class FormatType(SerializableEnum):
-    """Supported data format types"""
+    """
+    Supported data format types.
+    
+    🆕 GENERIC_MATRIX - New universal validator for any gene-by-sample matrix data.
+    Supports: RNA-seq, proteomics, CRISPR screens, drug response, metabolomics, etc.
+    """
     FASTA = "fasta"
     FASTQ = "fastq"
     GENBANK = "genbank"
@@ -237,8 +242,9 @@ class FormatType(SerializableEnum):
     CSV = "csv"
     JSON = "json"
     TABULAR = "tabular"
-    VARIANT_ANNOTATION = "variant_annotation"  # NEW: Phase 2
-    SAMPLE_METADATA = "sample_metadata"        # NEW: Phase 2
+    VARIANT_ANNOTATION = "variant_annotation"
+    SAMPLE_METADATA = "sample_metadata"
+    GENERIC_MATRIX = "generic_matrix"  # 🆕 NEW: Universal gene-by-sample validator
 
 
 class ReviewPriority(SerializableEnum):
@@ -263,7 +269,7 @@ class ValidationIssue(BaseModel):
     message: str
     severity: ValidationSeverity
     rule_id: Optional[str] = None
-    affected_records: int = 0  # ADDED: Track number of records affected by this issue
+    affected_records: int = 0
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -287,6 +293,7 @@ class DatasetMetadata(BaseModel):
     source: Optional[str] = None
     organism: Optional[str] = None
     experiment_type: Optional[str] = None
+    reference_genome: Optional[str] = None  # For variant data
     additional_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

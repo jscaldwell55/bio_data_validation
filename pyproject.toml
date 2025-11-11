@@ -6,6 +6,9 @@ authors = ["Your Team <team@example.com>"]
 readme = "README.md"
 packages = [{include = "src"}]
 
+[tool.poetry.scripts]
+validate-bio = "validate_bio:main"
+
 [tool.poetry.dependencies]
 python = "^3.11"
 # Core framework
@@ -37,6 +40,9 @@ python-dotenv = "^1.0.0"
 prometheus-client = "^0.19.0"
 python-levenshtein = "^0.27.1"
 jinja2 = "^3.1.6"
+# CLI
+click = "^8.1.0"
+rich = "^13.0.0"
 
 [tool.poetry.group.dev.dependencies]
 # Testing

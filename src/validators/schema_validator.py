@@ -10,9 +10,6 @@ import logging
 from src.schemas.base_schemas import ValidationResult, ValidationIssue, ValidationSeverity
 from src.schemas.biological_schemas import SequenceRecord, GuideRNARecord
 
-# ═══════════════════════════════════════════════════════════════════════════
-# MONITORING IMPORT - ADDED FOR STEP 3
-# ═══════════════════════════════════════════════════════════════════════════
 from src.monitoring.metrics import track_validation_metrics
 
 logger = logging.getLogger(__name__)
@@ -24,10 +21,6 @@ class SchemaValidator:
     def __init__(self):
         pass
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # MONITORING DECORATOR - ADDED FOR STEP 3
-    # Add @track_validation_metrics decorator here
-    # ═══════════════════════════════════════════════════════════════════════
     @track_validation_metrics("SchemaValidator")
     def validate(
         self,
@@ -55,10 +48,6 @@ class SchemaValidator:
         return validate_schema(dataset, schema_type, strict)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# MONITORING DECORATOR - ADDED FOR STEP 3
-# Add @track_validation_metrics decorator to the function too
-# ═══════════════════════════════════════════════════════════════════════════
 @track_validation_metrics("SchemaValidator")
 def validate_schema(
     dataset: Any,
@@ -70,7 +59,7 @@ def validate_schema(
     
     Args:
         dataset: Data to validate (dict, list, DataFrame, or string)
-        schema_type: Type of schema ('fasta', 'guide_rna', 'json', etc.')
+        schema_type: Type of schema ('fasta', 'guide_rna', 'json', 'generic_matrix', etc.)
         strict: Whether to fail on first error or collect all errors
         
     Returns:
@@ -80,8 +69,6 @@ def validate_schema(
     issues: List[ValidationIssue] = []
     records_processed = 0
     
-    # ... rest of function unchanged ...
-    
     try:
         if schema_type == 'fasta':
             issues, records_processed = _validate_fasta(dataset, strict)
@@ -90,6 +77,15 @@ def validate_schema(
         elif schema_type == 'json':
             issues, records_processed = _validate_json(dataset, strict)
         elif schema_type == 'tabular':
+            issues, records_processed = _validate_tabular(dataset, strict)
+        elif schema_type == 'generic_matrix':
+            # 🆕 NEW: Minimal schema validation for generic matrix
+            issues, records_processed = _validate_generic_matrix(dataset, strict)
+        elif schema_type == 'variant_annotation':
+            # Variant annotation uses generic tabular validation
+            issues, records_processed = _validate_tabular(dataset, strict)
+        elif schema_type == 'sample_metadata':
+            # Sample metadata uses generic tabular validation
             issues, records_processed = _validate_tabular(dataset, strict)
         else:
             issues.append(ValidationIssue(
@@ -131,6 +127,85 @@ def validate_schema(
         records_processed=records_processed,
         metadata={"schema_type": schema_type, "strict_mode": strict}
     )
+
+
+def _validate_generic_matrix(data: pd.DataFrame, strict: bool) -> Tuple[List[ValidationIssue], int]:
+    """
+    🆕 NEW: Minimal schema validation for generic matrix data.
+    
+    Generic matrix is designed to be flexible, so we only check critical structural issues.
+    Detailed validation is handled by MatrixValidator.
+    
+    Args:
+        data: DataFrame with genes as rows, samples as columns
+        strict: Whether to fail on first error
+        
+    Returns:
+        Tuple of (issues, records_processed)
+    """
+    issues = []
+    records_processed = 0
+    
+    # Check 1: Must be a DataFrame
+    if not isinstance(data, pd.DataFrame):
+        issues.append(ValidationIssue(
+            field="data_type",
+            message=f"Expected pandas DataFrame, got {type(data).__name__}",
+            severity=ValidationSeverity.CRITICAL
+        ))
+        return issues, 0
+    
+    # Check 2: DataFrame must not be empty
+    if data.empty:
+        issues.append(ValidationIssue(
+            field="dataframe",
+            message="DataFrame is empty - no data to validate",
+            severity=ValidationSeverity.CRITICAL
+        ))
+        return issues, 0
+    
+    # Check 3: Must have at least one row and one column
+    if data.shape[0] < 1:
+        issues.append(ValidationIssue(
+            field="rows",
+            message="DataFrame has no rows",
+            severity=ValidationSeverity.CRITICAL
+        ))
+    
+    if data.shape[1] < 1:
+        issues.append(ValidationIssue(
+            field="columns",
+            message="DataFrame has no columns",
+            severity=ValidationSeverity.CRITICAL
+        ))
+    
+    # If we have critical issues, return early
+    if any(i.severity == ValidationSeverity.CRITICAL for i in issues):
+        return issues, 0
+    
+    records_processed = len(data)
+    
+    # Check 4: Index should exist and not be all null
+    if data.index.isnull().all():
+        issues.append(ValidationIssue(
+            field="index",
+            message="All index values are null",
+            severity=ValidationSeverity.ERROR
+        ))
+    
+    # Check 5: Columns should have names
+    if data.columns.isnull().any():
+        null_col_count = data.columns.isnull().sum()
+        issues.append(ValidationIssue(
+            field="columns",
+            message=f"Found {null_col_count} columns with null names",
+            severity=ValidationSeverity.WARNING
+        ))
+    
+    # That's it! MatrixValidator will do the detailed checks
+    logger.info(f"Generic matrix schema validation: {len(issues)} issues, {records_processed} records")
+    
+    return issues, records_processed
 
 
 def _validate_fasta(data: str, strict: bool) -> Tuple[List[ValidationIssue], int]:
@@ -286,21 +361,18 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
                 
                 # Better error message parsing
                 if 'missing' in error_type.lower():
-                    # Should be caught above, but handle anyway
                     issues.append(ValidationIssue(
                         field=f"record_{idx}.{field_path}",
                         message=f"Missing required field: {field_path}",
                         severity=ValidationSeverity.ERROR
                     ))
                 elif 'type' in error_type.lower():
-                    # Type validation errors
                     issues.append(ValidationIssue(
                         field=f"record_{idx}.{field_path}",
                         message=f"Type validation failed: {error_msg}",
                         severity=ValidationSeverity.ERROR
                     ))
                 else:
-                    # Other validation errors
                     issues.append(ValidationIssue(
                         field=f"record_{idx}.{field_path}",
                         message=error_msg,
@@ -313,7 +385,6 @@ def _validate_guide_rna(data: Union[Dict, List[Dict], pd.DataFrame], strict: boo
                 break
         
         except Exception as e:
-            # Catch any other exceptions
             issues.append(ValidationIssue(
                 field=f"record_{idx}",
                 message=f"Validation error: {str(e)}",

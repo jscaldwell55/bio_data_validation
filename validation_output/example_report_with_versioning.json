@@ -1,7 +1,7 @@
 {
-  "validation_id": "db960359-08cf-4e22-a8de-99de530ec373",
+  "validation_id": "6963076b-1a76-4382-8869-c6856e2fe910",
   "dataset_id": "test_versioning_001",
-  "start_time": 1760726734.402674,
+  "start_time": 1761070444.69075,
   "metadata": {
     "dataset_id": "test_versioning_001",
     "format_type": "guide_rna",
@@ -14,7 +14,7 @@
   "stages": {
     "schema": {
       "validator_name": "SchemaValidator",
-      "timestamp": "2025-10-17 18:45:34.406278",
+      "timestamp": "2025-10-21 18:14:04.693968",
       "passed": true,
       "severity": "info",
       "issues": [],
@@ -22,36 +22,36 @@
         "schema_type": "guide_rna",
         "strict_mode": true
       },
-      "execution_time_ms": 3.2279491424560547,
+      "execution_time_ms": 2.767324447631836,
       "records_processed": 2
     },
     "rules": {
       "validator_name": "RuleValidator",
-      "timestamp": "2025-10-17 18:45:34.409927",
+      "timestamp": "2025-10-21 18:14:04.696721",
       "passed": true,
       "severity": "info",
       "issues": [],
       "metadata": {
         "total_rules_applied": 4
       },
-      "execution_time_ms": 3.202199935913086,
+      "execution_time_ms": 2.3338794708251953,
       "records_processed": 2
     },
     "bio_biorules": {
       "validator_name": "BioRules",
-      "timestamp": "2025-10-17 18:45:34.509932",
+      "timestamp": "2025-10-21 18:14:04.804031",
       "passed": true,
       "severity": "info",
       "issues": [],
       "metadata": {
         "data_type": "guide_rna"
       },
-      "execution_time_ms": 4.486799240112305,
+      "execution_time_ms": 4.800081253051758,
       "records_processed": 2
     },
     "bio_biolookups": {
       "validator_name": "BioLookups",
-      "timestamp": "2025-10-17 18:45:34.513149",
+      "timestamp": "2025-10-21 18:14:04.807134",
       "passed": true,
       "severity": "info",
       "issues": [],
@@ -73,7 +73,7 @@
         "provider_reliability": "0%",
         "optimization": "cache + batching + fallback"
       },
-      "execution_time_ms": 5.686044692993164,
+      "execution_time_ms": 5.0983428955078125,
       "records_processed": 2
     },
     "policy": {
@@ -81,7 +81,7 @@
       "passed": true,
       "severity": "info",
       "issues": [],
-      "execution_time_ms": 0.08606910705566406,
+      "execution_time_ms": 0.11491775512695312,
       "records_processed": 2,
       "metadata": {
         "decision": "accepted",
@@ -98,7 +98,7 @@
   },
   "final_decision": "accepted",
   "requires_human_review": false,
-  "execution_time_seconds": 0.11075711250305176,
+  "execution_time_seconds": 0.11671018600463867,
   "short_circuited": false,
   "decision_rationale": "Conditional accept: Manual review recommended",
   "ruleset_metadata": {
@@ -119,5 +119,5 @@
     "cache_enabled": true,
     "ensembl_fallback_enabled": true
   },
-  "end_time": 1760726734.513431
+  "end_time": 1761070444.807461
 }
